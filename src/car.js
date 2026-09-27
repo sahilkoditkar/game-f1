@@ -5,6 +5,21 @@ const WHEEL_R = 0.36;
 const WHEELBASE = 2.6;
 const clamp = THREE.MathUtils.clamp;
 
+/** Slide-regime tyre tuning (see Car.update). Forces are accelerations as fractions of grip lateral-g. */
+const DRIFT = {
+  muF: 0.55,      // front axle lateral limit
+  peakF: 0.2,     // front slip angle (rad) at which it saturates
+  rearHb: 0.2,    // rear axle limit with the handbrake on
+  rearOff: 0.5,   // rear limit while sliding, throttle off
+  rearOn: 0.36,   // rear limit while sliding, full throttle (power-over holds the drift)
+  peakR: 0.1,     // rear slip angle (rad) at which it saturates
+  bite: 4,        // how fast the rear bites again past `biteAt` rad of rear slip (self-limits the angle)
+  biteAt: 0.35,
+  yawDamp: 1.2,   // yaw-rate damping (1/s)
+  align: 1,       // restoring yaw toward the velocity direction (rad/s^2 per rad of slip)
+  assist: 0.7,    // counter-steer assist: fraction of the front slip the fronts follow by themselves
+};
+
 export class Car {
   /**
    * @param {object} o
@@ -38,6 +53,7 @@ export class Car {
     this.input = { throttle: 0, brake: 0, steer: 0, handbrake: false };
     this.offroad = false;
     this.drifting = false;
+    this.slide = 0;          // 0 = tyres gripping, 1 = rear axle sliding (drift state)
     this.wallHit = 0;        // impulse magnitude this frame (for fx/audio)
     this.carHit = 0;
     this.autopilot = false;  // finished players cruise under AI control
@@ -72,6 +88,7 @@ export class Car {
     this.pitch = 0;
     this.vf = this.vr = 0;
     this.yawRate = 0; this.latAccel = 0; this.longAccel = 0;
+    this.slide = 0; this.drifting = false;
     this.vel.set(0, 0, 0);
     this.updateMesh();
   }
@@ -104,7 +121,8 @@ export class Car {
     if (inp.throttle > 0) {
       const room = Math.max(0, 1 - this.vf / maxS);
       // strong low-end, tapering toward top speed
-      this.vf += s.accel * inp.throttle * (0.3 + 0.9 * Math.pow(room, 0.8)) * dt;
+      // sliding or locked rear wheels put less power down
+      this.vf += s.accel * inp.throttle * (0.3 + 0.9 * Math.pow(room, 0.8)) * (1 - 0.35 * this.slide) * dt;
     }
     if (inp.brake > 0) {
       if (this.vf > 0.3) this.vf = Math.max(0, this.vf - s.brake * inp.brake * dt);
@@ -114,40 +132,84 @@ export class Car {
     const drag = this.offroad ? 0.9 * (0.6 / offroadK) : 0.035;
     this.vf -= this.vf * drag * dt + Math.sign(this.vf) * Math.min(Math.abs(this.vf), 1.2 * dt);
     if (this.vf > maxS) this.vf -= (this.vf - maxS) * 2.5 * dt;
-    if (inp.handbrake) this.vf -= Math.sign(this.vf) * Math.min(Math.abs(this.vf), 11 * dt);
+    if (inp.handbrake) this.vf -= Math.sign(this.vf) * Math.min(Math.abs(this.vf), 7 * dt);
 
-    // ---- Lateral grip ------------------------------------------------------
-    // Lateral velocity decays toward zero; the rate is the tyre grip.
-    let grip = s.grip * (this.offroad ? 0.45 * (offroadK / 0.6) : 1);
-    if (inp.handbrake) grip *= 0.2;
-    const slipRatio = Math.abs(this.vr) / (Math.abs(this.vf) + 1);
-    if (slipRatio > 0.3) grip *= 0.6; // once sliding, keep sliding a bit
-    this.vr *= Math.exp(-grip * dt);
-    this.drifting = Math.abs(this.vr) > 5 && this.speed > 8;
-
-    // ---- Yaw (bicycle model with a grip-limited lateral acceleration) ------
+    // ---- Tyres: grip regime vs. slide regime ----------------------------
+    // Grip: a kinematic bicycle model (yaw follows the steering angle directly) with the
+    // lateral velocity scrubbed off by tyre grip and a lateral-g cap that gives understeer.
+    // Slide: the rear axle has let go (handbrake, a spin from an impact). Front and rear
+    // tyres then generate real lateral forces from their slip angles and the yaw rate is
+    // integrated with inertia, so the tail steps out, the car holds a drift angle under
+    // throttle, counter-steering catches it, and it hooks up again as the slip decays.
+    // `slide` in [0,1] blends the two and is the drift state exposed to fx/audio.
     const v = Math.abs(this.vf);
-    const maxSteer = (0.62 * s.turn) / (1 + v / 22);          // steering lock shrinks with speed
+    const grip = s.grip * (this.offroad ? 0.45 * (offroadK / 0.6) : 1);
+    const maxLat = s.grip * 2.6 * (this.offroad ? 0.5 : 1);    // m/s^2 the tyres can hold on grip
+    const handbrake = inp.handbrake && v > 2;
+    const slipV = Math.abs(this.vr);
+    const hookSlip = (maxLat / grip) * 1.3 + 0.8;               // lateral speed the tyres can carry without letting go
+    let slideT = 0;
+    if (handbrake) slideT = 1;
+    else if (this.slide > 0.05 && slipV > hookSlip && v > 4) slideT = 1;  // keep sliding until hooked up
+    else if (slipV > hookSlip * 2.5 && v > 6) slideT = 1;               // spun by an impact / overload
+    this.slide += (slideT - this.slide) * Math.min(1, dt * (slideT > this.slide ? 16 : 4));
+    const sl = this.slide;
+    this.drifting = sl > 0.5 && v > 5 && slipV > 2.5;
+
+    // Steering lock shrinks with speed on grip; sliding frees up more lock for counter-steer.
+    const lockGrip = (0.62 * s.turn) / (1 + v / 22);
+    const lockSlide = (0.62 * s.turn) / (1 + v / 70);
+    const maxSteer = lockGrip + (lockSlide - lockGrip) * sl;
     const delta = this.steer * maxSteer;
-    let yaw = (v * Math.tan(delta)) / WHEELBASE;               // kinematic yaw rate
-    const maxLat = s.grip * 2.6 * (this.offroad ? 0.5 : 1);    // m/s^2 the tyres can hold
-    let latLimit = inp.handbrake || this.drifting ? Infinity : maxLat;
-    if (v > 1 && Math.abs(yaw) * v > latLimit) {
-      // understeer: scrub a little speed and cap the turn rate
-      const excess = Math.abs(yaw) * v - latLimit;
-      yaw = Math.sign(yaw) * (latLimit / v);
-      this.vf -= Math.sign(this.vf) * Math.min(Math.abs(this.vf), excess * 0.15 * dt);
+
+    // Grip regime: kinematic yaw rate, capped by the lateral-g the tyres can hold (understeer).
+    let yawK = (v * Math.tan(delta)) / WHEELBASE;
+    if (v > 1 && Math.abs(yawK) * v > maxLat) {
+      const excess = Math.abs(yawK) * v - maxLat;
+      yawK = Math.sign(yawK) * (maxLat / v);
+      this.vf -= Math.sign(this.vf) * Math.min(Math.abs(this.vf), excess * 0.15 * (1 - sl) * dt);
     }
-    if (inp.handbrake) yaw *= 1.35;
-    if (this.drifting) yaw *= 1.1;
-    if (this.vf < 0) yaw = -yaw;
-    this.yawRate = yaw;
-    const prevHeading = this.heading;
+    if (this.vf < 0) yawK = -yawK;
+
+    // Slide regime: front/rear slip angles -> saturating lateral forces (accelerations, m/s^2).
+    // Conventions: yawRate > 0 turns the nose right, vr > 0 is velocity to the right of the nose.
+    const P = DRIFT;
+    const A = 1.2, B = WHEELBASE - A, K2 = 1.6;                 // CG to front/rear axle, yaw inertia / mass
+    const vFwd = Math.max(v, 1);
+    const yaw0 = this.yawRate;
+    const dir = this.vf < 0 ? -1 : 1;
+    const slipF = this.vr + A * yaw0, slipR = this.vr - B * yaw0;    // lateral velocity at each axle
+    // Counter-steer assist: the fronts follow the slide partly on their own (like an arcade
+    // drift), so steering into the corner deepens the angle and letting go straightens up.
+    const alphaF = Math.atan2(slipF, vFwd) * (1 - P.assist) - delta * dir;
+    const alphaR = Math.atan2(slipR, vFwd);
+    const muF = maxLat * P.muF;
+    // rear: locked by the handbrake, loosened by throttle (power-over), and biting again past ~25deg
+    // so a held drift settles at an angle instead of spinning out.
+    const rearK = handbrake ? P.rearHb : P.rearOff - (P.rearOff - P.rearOn) * inp.throttle;
+    const muR = maxLat * rearK * (1 + P.bite * Math.max(0, Math.abs(alphaR) - P.biteAt));
+    // Each axle can at most cancel its own slip within a step (keeps big frames stable).
+    const capF = Math.abs(slipF - vFwd * Math.tan(delta * dir)) / dt * 0.5;
+    const capR = Math.abs(slipR) / dt * 0.5;
+    const FF = -Math.sign(alphaF) * Math.min((muF / P.peakF) * Math.abs(alphaF), muF, capF);
+    const FR = -Math.sign(alphaR) * Math.min((muR / P.peakR) * Math.abs(alphaR), muR, capR);
+    const latAccD = FF + FR;
+    const beta = Math.atan2(this.vr, vFwd);
+    const yawAccD = (A * FF - B * FR) / K2 - yaw0 * P.yawDamp + beta * P.align;
+
+    // Blend regimes. Grip: yaw snaps to the kinematic value and lateral velocity decays.
+    this.yawRate += (yawK - this.yawRate) * (1 - sl) * Math.min(1, dt * 30) + sl * yawAccD * dt;
+    this.vr *= Math.exp(-grip * (1 - sl) * dt);
+    this.vr += sl * latAccD * dt;
+    // Sliding tyres scrub speed: the rear drags, and the fronts when they are heavily slipped.
+    this.vf -= Math.sign(this.vf) * Math.min(v, sl * (Math.abs(FR) * 0.18 + Math.abs(FF) * Math.abs(Math.sin(alphaF)) * 0.5) * dt);
+    const yaw = this.yawRate;
     this.heading -= yaw * dt;
 
-    // Rotating the frame converts some forward motion into lateral (this is what makes drifts happen)
-    const dH = this.heading - prevHeading;
-    const cos = Math.cos(dH), sin = Math.sin(dH);
+    // Rotating the frame keeps the velocity vector fixed in the world while the nose turns:
+    // turning the nose right (yaw > 0) leaves the velocity pointing left of it, so vr goes negative.
+    const th = yaw * dt;
+    const cos = Math.cos(th), sin = Math.sin(th);
     const nvf = this.vf * cos + this.vr * sin;
     const nvr = -this.vf * sin + this.vr * cos;
     this.vf = nvf; this.vr = nvr;
@@ -217,7 +279,7 @@ export class Car {
     }
 
     // Smoothed accelerations for body animation
-    const la = this.yawRate * this.vf;            // centripetal (m/s^2)
+    const la = this.yawRate * this.vf * (1 - sl) + latAccD * sl;   // lateral accel felt (m/s^2)
     const lo = (this.vf - prevVf) / Math.max(dt, 1e-4);
     this.latAccel += (la - this.latAccel) * Math.min(1, dt * 6);
     this.longAccel += (clamp(lo, -30, 30) - this.longAccel) * Math.min(1, dt * 5);
@@ -230,8 +292,8 @@ export class Car {
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.set(this.pitch, this.heading, 0, 'YXZ');
     // Body roll/pitch: only the painted shell moves, wheels stay planted.
-    // Positive latAccel = turning left (heading increases) -> body leans right.
-    const roll = clamp(this.latAccel * 0.0028, -0.06, 0.06);
+    // Positive latAccel = turning right (yawRate > 0) -> body leans out to the left (+z roll lifts the left side).
+    const roll = clamp(-this.latAccel * 0.0028, -0.06, 0.06);
     const pitch = clamp(-this.longAccel * 0.0025, -0.035, 0.035);
     this.body.rotation.z = roll;
     this.body.rotation.x = pitch;

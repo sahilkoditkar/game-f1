@@ -21,8 +21,11 @@ hosted directly on GitHub Pages (or any static host).
   are smooth procedural lofts with real wheel-arch openings, surface-hugging lights, glass and
   liveries, and wheels with brake discs and calipers. Race cars carry per-car numbers and livery
   colours. Open `showroom.html` to inspect every car up close.
-- Arcade driving model with a grip-limited bicycle steering model, drift handbrake, off-road
-  grip loss (the rally car barely cares), slope gravity, barrier and car-to-car collisions.
+- Arcade driving model with a grip-limited bicycle steering model, off-road grip loss (the
+  rally car barely cares), slope gravity, barrier and car-to-car collisions.
+- Proper drifting: tap the handbrake while turning and the rear steps out. Throttle holds the
+  slide, steering into the corner deepens the angle, counter-steering or lifting off lets the
+  tyres hook up again. A long handbrake pull spins the car round for a handbrake turn.
 - **Split-screen multiplayer**: two players on one keyboard (WASD vs arrow keys) or two gamepads.
   The screen splits left/right on wide displays and top/bottom on tall ones.
 - **Career mode**: four championships (Rookie Cup → Pro Series → Grand Prix → Legends Endurance),
