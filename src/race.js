@@ -4,6 +4,7 @@ import { buildScenery } from './scenery.js';
 import { Car, makeGhost } from './car.js';
 import { driveAI } from './ai.js';
 import { HUD } from './hud.js';
+import { DriftFx } from './fx.js';
 
 const clamp = THREE.MathUtils.clamp;
 
@@ -47,6 +48,7 @@ export class Race {
     this.tmp = new THREE.Vector3();
     this.tmp2 = new THREE.Vector3();
     this._setupCars();
+    this.fx = new DriftFx(this.scene, this.track, this.quality);
     this.hud = new HUD(this.players.length, this.track, this.cars, this.config);
     this._setupCameras();
     this._setupAudio();
@@ -318,6 +320,10 @@ export class Race {
     this._rank();
     this._updateDynamic(dt);
 
+    // Skid marks and tyre smoke
+    this.fx.setViewport(this.viewports[0].h, this.cameras[0].fov);
+    this.fx.update(this.cars, dt);
+
     // Cameras, audio, fx
     this.players.forEach((car, i) => {
       const cam = this.cameras[i];
@@ -534,6 +540,7 @@ export class Race {
   dispose() {
     this.audio.stopEngines();
     this.hud.dispose();
+    this.fx.dispose();
     if (this.envTex) this.envTex.dispose();
     this.input.setTouchVisible(false);
     this.scene.traverse(o => {
