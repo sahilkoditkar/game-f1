@@ -576,7 +576,7 @@ function makeRoadTexture(theme) {
   return tex;
 }
 
-function makeCheckerTexture() {
+export function makeCheckerTexture() {
   const c = document.createElement('canvas');
   c.width = 64; c.height = 64;
   const ctx = c.getContext('2d');
@@ -587,7 +587,7 @@ function makeCheckerTexture() {
   return tex;
 }
 
-function makeBannerTexture(name, theme) {
+export function makeBannerTexture(name, theme) {
   const c = document.createElement('canvas');
   c.width = 1024; c.height = 96;
   const ctx = c.getContext('2d');

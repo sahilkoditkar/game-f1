@@ -23,7 +23,7 @@ export class UI {
     });
   }
 
-  hide() { this.el.innerHTML = ''; this.el.classList.add('empty'); this.rerender = null; }
+  hide() { this.el.innerHTML = ''; this.el.classList.add('empty'); this.rerender = null; this.mapOpen = false; }
 
   show(html, { transparent = false } = {}) {
     this.el.classList.remove('empty');
@@ -53,6 +53,7 @@ export class UI {
         <div class="tagline">3D arcade racing · split screen · career</div>
         <div class="menu">
           <button class="primary" data-go="career">Career <span class="hint" style="color:#fff;opacity:.85">${money(p.money)}</span></button>
+          <button data-go="horizon" class="roam">Free Roam <span class="badge gold">new</span><span class="hint">Open world · events, speed traps, drift zones</span></button>
           <button data-go="quick">Quick Race <span class="hint">Single player vs AI</span></button>
           <button data-go="split">Split Screen <span class="hint">2 players, one screen</span></button>
           <button data-go="timetrial">Time Trial <span class="hint">Beat your best laps</span></button>
@@ -67,6 +68,7 @@ export class UI {
     this.on('[data-go]', 'click', (e, el) => {
       const go = el.dataset.go;
       if (go === 'career') this.career();
+      else if (go === 'horizon') this.horizonIntro();
       else if (go === 'settings') this.settings();
       else this.raceSetup(go);
     });
@@ -351,18 +353,129 @@ export class UI {
 
   // ------------------------------------------------------------ Pause
   pause() {
+    const app = this.app;
+    const inEvent = !!(app.race && app.horizon);
+    const roaming = !!(app.horizon && !app.race);
     this.show(`
       <div class="panel narrow">
         <h2>Paused</h2>
         <div class="menu">
           <button class="primary" data-resume>Resume</button>
-          <button data-restart>Restart race</button>
-          <button data-quit>Quit to menu</button>
+          ${roaming ? '<button data-map>Map <span class="hint">Waypoints, fast travel, progress</span></button>' : '<button data-restart>Restart race</button>'}
+          ${inEvent ? '<button data-quit>Back to Free Roam</button>' : roaming ? '<button data-quit-roam>Quit to menu <span class="hint">Position is saved</span></button>' : '<button data-quit>Quit to menu</button>'}
         </div>
       </div>`);
-    this.on('[data-resume]', 'click', () => this.app.togglePause());
-    this.on('[data-restart]', 'click', () => this.app.restartRace());
-    this.on('[data-quit]', 'click', () => this.app.quitRace());
+    this.on('[data-resume]', 'click', () => app.togglePause());
+    this.on('[data-restart]', 'click', () => app.restartRace());
+    this.on('[data-map]', 'click', () => { this.horizonMap(true); });
+    this.on('[data-quit]', 'click', () => app.quitRace());
+    this.on('[data-quit-roam]', 'click', () => app.quitHorizon());
+  }
+
+  // ------------------------------------------------------------ Free Roam
+  horizonIntro() {
+    const app = this.app, p = app.profile;
+    const car = getCar(p.selected);
+    const hz = p.horizon || {};
+    this.rerender = () => this.horizonIntro();
+    this.show(`
+      <div class="panel">
+        <div class="row between"><h2>Free Roam</h2><button class="small ghost" data-back>← Back</button></div>
+        <p>A 6 km open world with six regions: meadows, pine forest, red-rock desert, an alpine pass, a coastline and Apex City.
+        Every circuit and stage is out there as a drive-up event. Hunt speed traps, drift zones, speed zones and bonus boards for XP and credits.</p>
+        <div class="grid-2">
+          <div class="card">
+            <h4>Your car: ${car.name}</h4>
+            <div class="meta">${car.desc}</div>
+            ${this._statBars(effectiveStats(car, p.upgrades[car.id] || {}))}
+            <div class="meta" style="margin-top:6px">Change or upgrade cars in Career → Garage. Event prize money goes to your career balance (${money(p.money)}).</div>
+          </div>
+          <div class="card">
+            <h4>Progress</h4>
+            <div class="meta">${hz.xp ? `${hz.xp.toLocaleString()} XP` : 'No XP yet'} · ${(hz.discovered || []).length} places discovered · ${(hz.boards || []).length} boards · ${Object.keys(hz.events || {}).length} events raced · ${((hz.stats || {}).distance || 0).toFixed(1)} km driven</div>
+            <div class="field" style="margin-top:10px"><label>Controls</label>${this._controlChips(p.settings.p1Control || 'wasd', 'data-ctl="1"', 0)}</div>
+            <div class="meta"><kbd>M</kbd> map · <kbd>Enter</kbd> start an event when you are on its ring · <kbd>R</kbd> back to the nearest road · <kbd>Esc</kbd> pause</div>
+          </div>
+        </div>
+        <div class="row end" style="margin-top:18px">
+          ${hz.pos ? '<button data-fresh>Start at the festival</button>' : ''}
+          <button class="primary" data-start style="min-width:240px">${hz.pos ? 'Continue' : 'Drive'}</button>
+        </div>
+      </div>`);
+    this.on('[data-back]', 'click', () => this.mainMenu());
+    this.on('[data-ctl]', 'click', (e, el) => { p.settings.p1Control = el.dataset.id; app.save(); this.horizonIntro(); });
+    this.on('[data-fresh]', 'click', () => { p.horizon.pos = null; app.save(); this._launchHorizon(); });
+    this.on('[data-start]', 'click', () => this._launchHorizon());
+  }
+
+  _launchHorizon() {
+    this.show(`<div class="panel narrow" style="text-align:center"><div class="logo" style="font-size:40px">APEX <span>HORIZON</span></div><div class="tagline" style="margin:14px 0 0">Building the world…</div></div>`);
+    setTimeout(() => this.app.startHorizon(), 40);
+  }
+
+  /** Full-world map: waypoints, fast travel and progress. */
+  horizonMap(fromPause = false) {
+    const app = this.app, hz = app.horizon;
+    if (!hz) return;
+    this.mapOpen = true;
+    this.rerender = null;
+    const sum = hz.summary();
+    const size = Math.max(420, Math.min(640, Math.floor(Math.min(window.innerWidth - 80, window.innerHeight - 120))));
+    let selected = hz.waypoint || null;
+    const stars = (a, b) => `${a}<span class="meta">/${b}</span> ★`;
+    this.show(`
+      <div class="panel" style="width:min(1060px,100%)">
+        <div class="row between"><h2 style="margin:0">Map</h2><div class="meta">${sum.level.level > 1 ? `Level ${sum.level.level}` : 'Level 1'} · ${sum.xp.toLocaleString()} XP · ${money(sum.money)}</div><button class="small ghost" data-close>${fromPause ? '← Back' : 'Close (Esc / M)'}</button></div>
+        <div class="row" style="align-items:flex-start;margin-top:12px;gap:18px">
+          <canvas id="hz-map" width="${size}" height="${size}" style="border-radius:12px;cursor:crosshair;max-width:100%"></canvas>
+          <div style="flex:1;min-width:240px">
+            <div class="card" id="hz-sel"></div>
+            <h3>Progress</h3>
+            <div class="card hz-stats">
+              <div><span>Events raced</span><b>${sum.events}<span class="meta">/${sum.eventsTotal}</span></b></div>
+              <div><span>Speed traps</span><b>${stars(sum.trapStars, sum.trapTotal)}</b></div>
+              <div><span>Drift zones</span><b>${stars(sum.driftStars, sum.driftTotal)}</b></div>
+              <div><span>Speed zones</span><b>${stars(sum.zoneStars, sum.zoneTotal)}</b></div>
+              <div><span>Bonus boards</span><b>${sum.boards}<span class="meta">/${sum.boardsTotal}</span></b></div>
+              <div><span>Discovered</span><b>${sum.discovered}<span class="meta">/${sum.markers}</span></b></div>
+              <div><span>Distance driven</span><b>${sum.distance.toFixed(1)} km</b></div>
+            </div>
+            <div class="hz-legend meta">
+              <span><i style="background:#ffd23f"></i>Festival</span><span><i style="background:#ff5a1f"></i>Circuit</span><span><i style="background:#3ddc84"></i>Stage / board</span>
+              <span><i style="background:#2f7bff"></i>Speed trap</span><span><i style="background:#b04cff"></i>Drift zone</span><span><i style="background:#00d4ff"></i>Speed zone</span>
+            </div>
+          </div>
+        </div>
+      </div>`);
+    const canvas = document.getElementById('hz-map');
+    const selBox = document.getElementById('hz-sel');
+    const renderSel = () => {
+      if (!selected) { selBox.innerHTML = '<div class="meta">Click a marker for details, a waypoint, or fast travel (once discovered).</div>'; return; }
+      const m = selected;
+      const discovered = m.kind === 'hub' || hz.prog.discovered.includes(m.id);
+      const kindName = { hub: 'Festival hub', event: m.track ? (m.track.kind === 'stage' ? 'Point-to-point stage' : 'Circuit race') : 'Event', trap: 'Speed trap', drift: 'Drift zone', zone: 'Speed zone' }[m.kind];
+      const d = Math.hypot(m.x - hz.car.pos.x, m.z - hz.car.pos.z);
+      selBox.innerHTML = `
+        <h4>${m.name}</h4>
+        <div class="meta">${kindName}${m.track ? ` · ${m.track.desc}` : ''}</div>
+        <div class="meta" style="margin-top:6px">${hz.world.regionAt(m.x, m.z).name} · ${d >= 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d) + ' m'} away${m.kind === 'event' ? ` · ${m.track.open ? 'stage' : m.laps + ' laps'} · ${m.ai} rivals` : ''}</div>
+        <div style="margin-top:6px">${hz.markerBest(m)}</div>
+        <div class="row" style="margin-top:10px">
+          <button class="small primary" data-wp>${hz.waypoint === m ? 'Clear waypoint' : 'Set waypoint'}</button>
+          <button class="small" data-travel ${discovered ? '' : 'disabled title="Drive there first to unlock fast travel"'}>Fast travel</button>
+        </div>`;
+      selBox.querySelector('[data-wp]').addEventListener('click', () => { app.setWaypoint(hz.waypoint === m ? null : m); app.audio.click(); renderSel(); draw(); });
+      selBox.querySelector('[data-travel]').addEventListener('click', () => { if (discovered) { app.audio.click(); app.fastTravel(m); } });
+    };
+    const draw = () => hz.drawMap(canvas, selected);
+    canvas.addEventListener('click', (e) => {
+      const r = canvas.getBoundingClientRect();
+      const px = (e.clientX - r.left) * (canvas.width / r.width), py = (e.clientY - r.top) * (canvas.height / r.height);
+      const m = hz.markerAt(canvas, px, py);
+      if (m) { selected = m; app.audio.click(); renderSel(); draw(); }
+    });
+    renderSel(); draw();
+    this.on('[data-close]', 'click', () => { if (fromPause) { this.mapOpen = false; this.pause(); } else app.closeMap(); });
   }
 
   // ------------------------------------------------------------ Results
@@ -389,6 +502,7 @@ export class UI {
         ${this._standingsTable(ctx.seriesId, 6)}
       </div>`;
     }
+    const rewardHtml = ctx.horizonReward ? `<div class="notice" style="margin-top:12px">Free Roam reward: <b class="money">+${money(ctx.horizonReward.credits)}</b> · <b>+${ctx.horizonReward.xp} XP</b></div>` : '';
     this.show(`
       <div class="panel">
         <h1>${heading}</h1>
@@ -401,13 +515,14 @@ export class UI {
             <td class="num" style="${r.bestLap === bestOverall ? 'color:var(--accent-2);font-weight:700' : ''}">${fmtTime(r.bestLap)}</td></tr>`).join('')}
         </table>
         ${ctx.newBest ? `<div class="notice" style="margin-top:12px">🏁 New personal best ${ctx.stage ? 'stage time' : 'lap'}: <b>${fmtTime(ctx.newBest)}</b>${ctx.ghostSaved ? ' · saved as your ghost' : ''}</div>` : ''}
+        ${rewardHtml}
         ${careerHtml}
         <div class="row end" style="margin-top:18px">
           ${ctx.mode !== 'career' ? '<button data-retry>Race again</button>' : ''}
-          <button class="primary" data-continue>${ctx.mode === 'career' ? 'Continue' : 'Main menu'}</button>
+          <button class="primary" data-continue>${ctx.mode === 'career' ? 'Continue' : ctx.mode === 'horizon' ? 'Back to Free Roam' : 'Main menu'}</button>
         </div>
       </div>`);
     this.on('[data-retry]', 'click', () => app.restartRace());
-    this.on('[data-continue]', 'click', () => app.leaveRace(ctx.mode === 'career' ? 'career' : 'menu'));
+    this.on('[data-continue]', 'click', () => app.leaveRace(ctx.mode === 'career' ? 'career' : ctx.mode === 'horizon' ? 'horizon' : 'menu'));
   }
 }

@@ -6,6 +6,16 @@ hosted directly on GitHub Pages (or any static host).
 
 **Features**
 
+- **Free Roam open world** (new): a 6 km square map streamed in chunks around you, with six regions:
+  Meadowvale farmland, Pinewood Hills forest, Red Mesa Flats desert, the Frostpeak alpine pass, the Azure
+  Shore coastline and Apex City with a grid of streets and towers. Twenty-three roads from a four-lane
+  highway ring down to gravel trails, with junctions, elevation and a shoreline. Every circuit and stage
+  is placed in the world as a drive-up event: roll onto its ring and press Enter to race it against
+  Dynamic AI, with prize money and XP. Ten speed traps, six drift zones, four speed zones and forty bonus
+  boards give star ratings and XP; levels pay out credits. A full map (M) shows roads, regions and
+  markers, sets waypoints and fast-travels to places you have discovered. Your position and all progress
+  save in the browser.
+
 - Sixteen circuits with elevation: eight original themed tracks (club circuit, coast, harbour,
   desert, canyon, alpine, forest, neon night city) and eight layouts inspired by real-world
   circuits: Silverstone, Monza, Spa-Francorchamps, Interlagos, Red Bull Ring, Bahrain, Circuit
@@ -80,6 +90,8 @@ so it works from a project sub-path as well as from a custom domain.
 | Handbrake (drift) | `Shift` / `Space` | `Right Shift` / `Right Ctrl` | B / RB      |
 | Reset to track    | `R`             | `.`                     | Y                  |
 | Pause             | `Esc`           | `Esc`                   | Start              |
+| Free Roam: map    | `M` / `Tab`     |                         | Back / Select      |
+| Free Roam: start event | `Enter` / `E` |                       | A                  |
 
 On touch devices, on-screen steering, gas, brake and drift buttons are shown for Player 1.
 

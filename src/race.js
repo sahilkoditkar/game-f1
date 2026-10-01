@@ -5,6 +5,7 @@ import { Car, makeGhost } from './car.js';
 import { driveAI } from './ai.js';
 import { HUD } from './hud.js';
 import { DriftFx } from './fx.js';
+import { buildSun, aimSun, buildEnvironment, updateChaseCamera, snapChaseCamera } from './scenekit.js';
 
 const clamp = THREE.MathUtils.clamp;
 
@@ -58,59 +59,13 @@ export class Race {
   }
 
   _lights() {
-    const th = this.theme;
-    const hemi = new THREE.HemisphereLight(th.sky, th.ground, th.ambient * 2.4);
-    this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(th.night ? 0x9fb0ff : 0xfff4e0, th.sun * 3.0);
-    sun.position.set(120, 180, 80);
-    sun.castShadow = this.quality !== 'low';
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.near = 10; sun.shadow.camera.far = 600;
-    sun.shadow.camera.left = -90; sun.shadow.camera.right = 90;
-    sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90;
-    sun.shadow.bias = -0.0008;
-    sun.shadow.camera.updateProjectionMatrix();
-    this.sun = sun;
-    this.scene.add(sun);
-    this.scene.add(sun.target);
+    this.sun = buildSun(this.scene, this.theme, this.quality !== 'low');
   }
 
-  /** Cheap procedural environment map so paint and glass have reflections. */
   _environment() {
-    const th = this.theme;
-    const env = new THREE.Scene();
-    const skyMat = new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      uniforms: { top: { value: new THREE.Color(th.sky) }, bottom: { value: new THREE.Color(th.ground) }, horizon: { value: new THREE.Color(th.fog) } },
-      vertexShader: 'varying vec3 vW; void main(){ vW = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: 'uniform vec3 top; uniform vec3 bottom; uniform vec3 horizon; varying vec3 vW; void main(){ float h = normalize(vW).y; vec3 c = h > 0.0 ? mix(horizon, top, pow(h, 0.6)) : mix(horizon, bottom, pow(-h, 0.5)); gl_FragColor = vec4(c, 1.0); }',
-    });
-    env.add(new THREE.Mesh(new THREE.SphereGeometry(50, 16, 8), skyMat));
-    const sunDisc = new THREE.Mesh(new THREE.SphereGeometry(4, 8, 8), new THREE.MeshBasicMaterial({ color: th.night ? 0x334466 : 0xffffff }));
-    sunDisc.position.set(20, 30, 14);
-    env.add(sunDisc);
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.envTex = pmrem.fromScene(env, 0.04).texture;
-    pmrem.dispose();
+    this.envTex = buildEnvironment(this.renderer, this.theme);
     this.scene.environment = this.envTex;
-    this.scene.environmentIntensity = th.night ? 0.5 : 0.9;
-  }
-
-  /** Round a world point to the shadow map's texel grid in light space. */
-  _snapToShadowTexels(v) {
-    if (!this._lightBasis) {
-      const dir = new THREE.Vector3(120, 180, 80).normalize();
-      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
-      const up = new THREE.Vector3().crossVectors(dir, right).normalize();
-      this._lightBasis = { right, up, dir };
-    }
-    const b = this._lightBasis;
-    const cam = this.sun.shadow.camera;
-    const texel = (cam.right - cam.left) / this.sun.shadow.mapSize.x;
-    const r = v.dot(b.right), u = v.dot(b.up), d = v.dot(b.dir);
-    const rs = Math.round(r / texel) * texel, us = Math.round(u / texel) * texel;
-    v.set(0, 0, 0).addScaledVector(b.right, rs).addScaledVector(b.up, us).addScaledVector(b.dir, d);
-    return v;
+    this.scene.environmentIntensity = this.theme.night ? 0.5 : 0.9;
   }
 
   _setupGhost() {
@@ -226,41 +181,9 @@ export class Race {
     this.hud.layout(n, this.vertical);
   }
 
-  _snapCamera(cam, car) {
-    cam.userData.heading = car.heading;
-    this._updateCamera(cam, car, 1);
-  }
+  _snapCamera(cam, car) { snapChaseCamera(cam, car, this.tmp2); }
 
-  _updateCamera(cam, car, dt) {
-    // Position is rigidly attached to the car (no positional lag); only the
-    // camera's heading eases toward the car's heading so turns feel smooth.
-    let d = car.heading - cam.userData.heading;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    cam.userData.heading += d * Math.min(1, dt * 6);
-    const h = cam.userData.heading;
-    const speedF = clamp(car.speed / 60, 0, 1);
-    const dist = 7.5 + speedF * 2.5;
-    const height = 3.0 + speedF * 0.7;
-    const fx = Math.sin(h), fz = Math.cos(h);
-    // Vertical tracking is low-passed so crests and dips don't shake the view.
-    const ky = 1 - Math.exp(-dt * 7);
-    if (cam.userData.y === undefined || dt >= 1) { cam.userData.y = car.pos.y; cam.userData.lookY = car.pos.y; }
-    cam.userData.y += (car.pos.y - cam.userData.y) * ky;
-    cam.userData.lookY += (car.pos.y - cam.userData.lookY) * ky;
-    cam.position.set(car.pos.x - fx * dist, cam.userData.y + height, car.pos.z - fz * dist);
-    if (cam.userData.shake > 0.01) {
-      cam.position.x += (Math.random() - 0.5) * cam.userData.shake;
-      cam.position.y += (Math.random() - 0.5) * cam.userData.shake * 0.6;
-      cam.userData.shake *= Math.exp(-dt * 7);
-    }
-    const f = car.forward;
-    const look = this.tmp2.copy(car.pos).addScaledVector(f, 6);
-    look.y = cam.userData.lookY + 0.9;
-    cam.lookAt(look);
-    const fov = 66 + speedF * 14;
-    if (Math.abs(cam.fov - fov) > 0.1) { cam.fov += (fov - cam.fov) * Math.min(1, dt * 4); cam.updateProjectionMatrix(); }
-  }
+  _updateCamera(cam, car, dt) { updateChaseCamera(cam, car, dt, this.tmp2); }
 
   /** Move a player car back onto the track facing the right way. */
   resetCar(car) {
@@ -336,9 +259,7 @@ export class Race {
 
     // Shadow camera follows the players, snapped to shadow-map texels so edges don't shimmer
     const focus = this.players.length === 1 ? this.players[0].pos.clone() : this.players[0].pos.clone().add(this.players[1].pos).multiplyScalar(0.5);
-    this._snapToShadowTexels(focus);
-    this.sun.position.set(focus.x + 120, focus.y + 180, focus.z + 80);
-    this.sun.target.position.copy(focus);
+    aimSun(this.sun, focus);
     if (this.players.length > 1) {
       const d = this.players[0].pos.distanceTo(this.players[1].pos);
       const sz = clamp(60 + d * 0.6, 90, 260);

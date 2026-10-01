@@ -3,6 +3,8 @@ import { Input, getControl, connectedPads } from './input.js';
 import { AudioSystem } from './audio.js';
 import { UI } from './ui.js';
 import { Race } from './race.js';
+import { Horizon } from './horizon.js';
+import { EVENT_PRIZE } from './worlddef.js';
 import { getTrack } from './tracks.js';
 import { getCar, getSeries, PLAYER_COLORS, effectiveStats } from './data.js';
 import {
@@ -42,6 +44,7 @@ class App {
     this.audio.setEnabled(this.profile.settings.sound);
     this.ui = new UI(this);
     this.race = null;
+    this.horizon = null;
     this.raceCtx = null;
     this.lastRaceConfig = null;
     this.paused = false;
@@ -106,16 +109,27 @@ class App {
     this.renderer.setSize(w, h);
     if (this.idle) { this.idle.camera.aspect = w / h; this.idle.camera.updateProjectionMatrix(); }
     if (this.race) this.race.resize();
+    if (this.horizon) this.horizon.resize();
   }
 
   frame() {
     const dt = Math.min(this.clock.getDelta(), 0.1);
-    if (this.race) {
+    if (this.race || this.horizon) {
       let pauseKey = this.input.justPressed('Escape') || this.input.touch.pause;
       for (const pd of connectedPads()) if (this.input.read('none', pd.index, -1).pause) pauseKey = true;
-      if (pauseKey && this.race.state !== 'finished') this.togglePause();
-      if (!this.paused) this.race.update(dt);
-      this.race.render();
+      if (pauseKey && !(this.race && this.race.state === 'finished')) {
+        if (this.ui.mapOpen) this.closeMap(); else this.togglePause();
+      }
+      if (this.race) {
+        if (!this.paused) this.race.update(dt);
+        this.race.render();
+      } else {
+        if (!this.paused) {
+          this.horizon.update(dt);
+          if (this.horizon.requestMap) { this.horizon.requestMap = false; this.openMap(); }
+        }
+        this.horizon.render();
+      }
     } else if (this.idle) {
       this.idle.t += dt;
       this.idle.pivot.rotation.y = this.idle.t * 0.35;
@@ -163,6 +177,82 @@ class App {
       { mode: 'career', seriesId, trackName: track.name, laps: ev.laps, trackId: track.id, carId: car.id });
   }
 
+  // ------------------------------------------------------------ Free Roam
+  startHorizon() {
+    this.disposeRace();
+    this.disposeHorizon();
+    this.ui.hide();
+    this.audio.init();
+    this.horizon = new Horizon({
+      renderer: this.renderer, input: this.input, audio: this.audio, profile: this.profile, quality: this.profile.settings.quality,
+      onEvent: (marker) => this.startHorizonEvent(marker),
+      onSave: () => this.save(),
+      onLevel: () => this._refreshIdleCars(),
+    });
+    this.paused = false;
+  }
+
+  /** Drive-up event inside Free Roam: run the circuit as a race, then return to the world. */
+  startHorizonEvent(marker) {
+    const hz = this.horizon;
+    if (!hz) return;
+    hz.saveState();
+    hz.suspend();
+    const car = getCar(this.profile.selected);
+    const players = [this._playerEntry({ name: this.profile.name, colorIndex: this.profile.colorIndex || 0, control: this.profile.settings.p1Control }, 0, playerStats(this.profile), car.shape)];
+    const ai = quickField(marker.ai, 0.85, car.id);
+    const laps = marker.track.open ? 1 : marker.laps;
+    this.startRace({ track: marker.track, laps, players, ai, mode: 'horizon', dynamic: true, quality: this.profile.settings.quality },
+      { mode: 'horizon', eventId: marker.id, trackName: marker.track.name, laps, trackId: marker.track.id, carId: car.id, dynamic: true, stage: !!marker.track.open, marker });
+  }
+
+  /** Back to the world after an event (results screen "Back to Free Roam"). */
+  returnToHorizon() {
+    const marker = this.raceCtx && this.raceCtx.marker;
+    this.disposeRace();
+    this.paused = false;
+    this.ui.hide();
+    if (this.horizon) this.horizon.resume(marker);
+    else this.startHorizon();
+  }
+
+  quitHorizon() {
+    if (this.horizon) this.horizon.saveState();
+    this.disposeHorizon();
+    this.paused = false;
+    this.ui.mapOpen = false;
+    this.ui.mainMenu();
+  }
+
+  disposeHorizon() {
+    if (this.horizon) { this.horizon.dispose(); this.horizon = null; }
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+  }
+
+  openMap(fromPause = false) {
+    if (!this.horizon || this.race) return;
+    this.paused = true;
+    this.horizon.setPaused(true);
+    this.ui.horizonMap(fromPause);
+  }
+
+  closeMap() {
+    this.ui.mapOpen = false;
+    if (!this.horizon) return;
+    this.paused = false;
+    this.horizon.setPaused(false);
+    this.ui.hide();
+  }
+
+  setWaypoint(marker) { if (this.horizon) this.horizon.waypoint = marker; }
+
+  fastTravel(marker) {
+    if (!this.horizon) return;
+    this.horizon.teleportTo(marker);
+    this.closeMap();
+  }
+
   startRace(config, ctx) {
     this.disposeRace();
     this.lastRaceConfig = { config, ctx };
@@ -187,6 +277,20 @@ class App {
       ctx.career = applyCareerResult(this.profile, ctx.seriesId, results);
       this._refreshIdleCars();
     }
+    if (ctx.mode === 'horizon' && me && this.horizon) {
+      const field = results.length;
+      const credits = Math.round((EVENT_PRIZE[me.rank - 1] || 200) * (ctx.laps > 2 ? 1.3 : 1));
+      const xp = 500 + Math.max(0, field - me.rank) * 90 + (me.rank === 1 ? 500 : me.rank <= 3 ? 200 : 0);
+      this.profile.money += credits;
+      this.profile.stats.races++;
+      if (me.rank === 1) this.profile.stats.wins++;
+      if (me.rank <= 3) this.profile.stats.podiums++;
+      const prev = this.profile.horizon.events[ctx.eventId];
+      if (!prev || me.rank < prev) this.profile.horizon.events[ctx.eventId] = me.rank;
+      this.horizon.addXp(xp);
+      ctx.horizonReward = { credits, xp };
+      this.save();
+    }
     document.getElementById('hud-layer').classList.add('hidden');
     this.ui.results(results, ctx);
   }
@@ -204,6 +308,7 @@ class App {
   }
 
   quitRace() {
+    if (this.horizon) return this.returnToHorizon();
     this.disposeRace();
     this.paused = false;
     this.ui.mainMenu();
@@ -211,6 +316,7 @@ class App {
 
   /** Leave a finished race and show a menu screen ('menu' | 'career'). */
   leaveRace(where = 'menu') {
+    if (where === 'horizon') return this.returnToHorizon();
     this.disposeRace();
     this.paused = false;
     if (where === 'career') this.ui.career(); else this.ui.mainMenu();
@@ -223,9 +329,10 @@ class App {
   }
 
   togglePause() {
-    if (!this.race) return;
+    const live = this.race || this.horizon;
+    if (!live) return;
     this.paused = !this.paused;
-    this.race.setPaused(this.paused);
+    live.setPaused(this.paused);
     if (this.paused) this.ui.pause(); else this.ui.hide();
   }
 
