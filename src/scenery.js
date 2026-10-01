@@ -139,7 +139,7 @@ export function buildScenery(track, quality = 'high') {
   return g;
 }
 
-function addTrees(g, kind, positions, highQ) {
+export function addTrees(g, kind, positions, highQ) {
   let trunkGeo, leafGeo, trunkColor, leafColor, leafY, trunkY;
   if (kind === 'pine') {
     trunkGeo = new THREE.CylinderGeometry(0.35, 0.6, 3, 6);

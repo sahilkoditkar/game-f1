@@ -9,7 +9,13 @@ export function defaultProfile() {
     series: {}, stats: { races: 0, wins: 0, podiums: 0, earned: 0 },
     bestLaps: {},
     settings: { quality: 'high', volume: 0.7, sound: true, p1Control: 'wasd', p2Control: 'arrows' },
+    horizon: defaultHorizon(),
   };
+}
+
+/** Free Roam progress: XP, best ratings per skill marker, collected boards, event results, saved position. */
+export function defaultHorizon() {
+  return { xp: 0, traps: {}, drifts: {}, zones: {}, boards: [], events: {}, discovered: [], pos: null, stats: { distance: 0 } };
 }
 
 export function loadProfile() {
@@ -18,7 +24,9 @@ export function loadProfile() {
     if (!raw) return defaultProfile();
     const p = JSON.parse(raw);
     const d = defaultProfile();
-    return { ...d, ...p, settings: { ...d.settings, ...(p.settings || {}) }, stats: { ...d.stats, ...(p.stats || {}) } };
+    const hz = { ...d.horizon, ...(p.horizon || {}) };
+    hz.stats = { ...d.horizon.stats, ...(hz.stats || {}) };
+    return { ...d, ...p, settings: { ...d.settings, ...(p.settings || {}) }, stats: { ...d.stats, ...(p.stats || {}) }, horizon: hz };
   } catch (e) { return defaultProfile(); }
 }
 
