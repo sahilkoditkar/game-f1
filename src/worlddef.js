@@ -41,12 +41,13 @@ function cityStreets() {
     const x = CITY_X0 + i * CITY_STEP;
     const z = CITY_Z0 + i * CITY_STEP;
     // north-south street i (the middle one runs on south to the coast highway)
-    const ns = [[x, CITY_Z0 - 120], [x, CITY_Z0], [x, (CITY_Z0 + CITY_Z1) / 2], [x, CITY_Z1]];
-    if (i === 2) ns.push([x, CITY_Z1 + 200], [x - 40, 2290]);
-    else ns.push([x, CITY_Z1 + 110]);
+    const ns = [[x, CITY_Z0 - 30], [x, CITY_Z0], [x, (CITY_Z0 + CITY_Z1) / 2], [x, CITY_Z1]];
+    if (i === 2) ns.push([x, CITY_Z1 + 200], [x - 40, 2290]);   // on to the coast highway
+    else ns.push([x, CITY_Z1 + 30]);
+    if (i === 0) ns.unshift([1500, 1150], [1430, 1000]);       // up to the ring road
     out.push({ id: `st-ns${i}`, name: ['Harbour St', 'Festival Ave', 'Apex Blvd', 'Neon Row', 'Dock Lane', 'Skyline Dr'][i], kind: 'street', width: 13, points: ns });
     // east-west street i (the first one is the avenue in from the ring road)
-    const ew = [[CITY_X0 - 110, z], [CITY_X0, z], [(CITY_X0 + CITY_X1) / 2, z], [CITY_X1, z], [CITY_X1 + 110, z]];
+    const ew = [[CITY_X0 - 30, z], [CITY_X0, z], [(CITY_X0 + CITY_X1) / 2, z], [CITY_X1, z], [CITY_X1 + 30, z]];
     if (i === 0) ew.unshift([1150, 1320], [1330, 1420]);
     out.push({ id: `st-ew${i}`, name: ['Grand Avenue', 'Market St', 'Union St', 'Pier Rd', 'Beacon St', 'Cannery Row'][i], kind: 'street', width: 13, points: ew });
   }
@@ -62,23 +63,23 @@ export const ROADS = [
   { id: 'coast', name: 'Shoreline Highway', kind: 'highway', width: 18,
     points: [[-2950, 2330], [-2400, 2260], [-1800, 2340], [-1200, 2250], [-600, 2320], [0, 2270], [600, 2330], [1200, 2280], [1800, 2310], [2400, 2250], [2950, 2300]] },
   { id: 'spine', name: 'Meridian Road', kind: 'road', width: 14,
-    points: [[-150, 2950], [-60, 2500], [40, 2270], [230, 1690], [120, 900], [-120, 0], [-60, -900], [150, -1760], [0, -2400], [-200, -2950]] },
+    points: [[40, 2275], [230, 1690], [120, 900], [-120, 0], [-60, -900], [150, -1760], [0, -2400], [-200, -2950]] },
   { id: 'ew', name: 'Old Valley Road', kind: 'road', width: 14,
     points: [[-2950, 150], [-2300, 320], [-1750, 180], [-1200, 100], [-400, -100], [400, 200], [1200, 50], [1750, -150], [2300, -250], [2950, -50]] },
   { id: 'trail', name: 'Pinewood Trail', kind: 'dirt', width: 9,
     points: [[-2500, -2300], [-2250, -2050], [-2000, -1700], [-1700, -1900], [-1500, -1550], [-1250, -1350], [-1400, -950], [-1100, -650], [-900, -350], [-760, -120], [-700, 180]] },
   { id: 'pass', name: 'Frostpeak Pass', kind: 'lane', width: 10,
-    points: [[-700, -1800], [-420, -2050], [-800, -2250], [-380, -2450], [-760, -2650], [-300, -2800], [-100, -2900]] },
+    points: [[-700, -1800], [-420, -2050], [-800, -2250], [-380, -2450], [-760, -2650], [-350, -2780], [-120, -2700]] },
   { id: 'canyon', name: 'Canyon Loop', kind: 'road', width: 14, closed: true,
     points: [[1750, -200], [2200, -600], [2650, -450], [2850, -950], [2550, -1350], [2050, -1500], [1800, -1150], [1600, -700]] },
   { id: 'farm1', name: 'Orchard Lane', kind: 'lane', width: 11,
-    points: [[-1750, 1320], [-1350, 950], [-800, 1120], [-300, 820], [100, 900]] },
+    points: [[-1400, 1060], [-1200, 980], [-800, 1120], [-300, 820], [100, 900]] },
   { id: 'farm2', name: 'Millbrook Lane', kind: 'lane', width: 11,
     points: [[-1760, -20], [-1420, 560], [-1120, 1280], [-900, 1800], [-700, 2320]] },
   { id: 'hilltop', name: 'Ridge Road', kind: 'lane', width: 10,
     points: [[880, -1520], [620, -1120], [900, -720], [1300, -520], [1750, -200]] },
   { id: 'dunes', name: 'Dune Track', kind: 'dirt', width: 10,
-    points: [[2300, -250], [2500, 200], [2850, 450], [2700, 850], [2350, 1100], [2500, 1500], [2900, 1700]] },
+    points: [[2300, -250], [2500, 200], [2850, 450], [2700, 850], [2350, 1100], [2500, 1500], [2750, 1900], [2800, 2260]] },
   ...cityStreets(),
 ];
 
