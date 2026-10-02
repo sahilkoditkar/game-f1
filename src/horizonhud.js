@@ -210,6 +210,11 @@ export class HorizonHUD {
       ctx.fillStyle = m.kind === 'event' && m.track.kind === 'stage' ? '#3ddc84' : col[m.kind];
       ctx.beginPath(); ctx.arc(m.x, m.z, 7, 0, Math.PI * 2); ctx.fill();
     }
+    for (const t of this.hz.traffic.cars) {
+      const dx = t.pos.x - car.pos.x, dz = t.pos.z - car.pos.z;
+      if (dx * dx + dz * dz > (RADAR_M * 0.8) ** 2) continue;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.arc(t.pos.x, t.pos.z, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
     for (const b of W.boards) {
       if (!this.hz.boardMeshes.has(b.id)) continue;
       const dx = b.x - car.pos.x, dz = b.z - car.pos.z;

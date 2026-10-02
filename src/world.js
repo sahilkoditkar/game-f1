@@ -118,10 +118,54 @@ export class World {
   }
 
   // ------------------------------------------------------------ Roads
+  /**
+   * Open roads that end near another road are extended to meet it exactly, so
+   * every T-junction lands on the other road's centreline instead of stopping
+   * short of it or overshooting.
+   */
+  _snapEndpoints() {
+    const sampled = ROADS.map(def => ({ def, pts: sampleSpline(def.points, SPACING * 2, !def.closed) }));
+    const SNAP = 230, EDGE = WORLD_HALF - 120;
+    const RANK = { highway: 4, road: 3, street: 2, lane: 1, dirt: 0 };
+    return sampled.map(({ def, pts }, ri) => {
+      if (def.closed) return def;
+      const points = def.points.map(p => [p[0], p[1]]);
+      for (const end of [0, points.length - 1]) {
+        const ex = points[end][0], ez = points[end][1];
+        // roads running off the edge of the map are exits, not junctions
+        if (Math.abs(ex) > EDGE || Math.abs(ez) > EDGE) continue;
+        let best = null, bd = SNAP * SNAP;
+        sampled.forEach((o, oi) => {
+          if (oi === ri) return;
+          // only onto a road of equal or higher standing (so a highway never bends to meet a lane),
+          // and only onto its interior, never onto its own ends
+          if (RANK[o.def.kind] < RANK[def.kind]) return;
+          const margin = o.def.closed ? 0 : 6;
+          for (let k = margin; k < o.pts.length - margin; k++) {
+            const d = (o.pts[k][0] - ex) ** 2 + (o.pts[k][1] - ez) ** 2;
+            if (d < bd) { bd = d; best = { pts: o.pts, k, def: o.def }; }
+          }
+        });
+        if (!best) continue;
+        // continue a little past the centreline so the end edge hides under the other road
+        const k = best.k, o = best.pts;
+        const a = o[Math.max(0, k - 1)], b = o[Math.min(o.length - 1, k + 1)];
+        let tx = b[0] - a[0], tz = b[1] - a[1];
+        const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+        const nx = tz, nz = -tx;
+        const inner = points[end === 0 ? 1 : end - 1];
+        const side = Math.sign((o[k][0] - inner[0]) * nx + (o[k][1] - inner[1]) * nz) || 1;
+        const over = best.def.width * 0.3;
+        points[end] = [o[k][0] + nx * side * over, o[k][1] + nz * side * over];
+      }
+      return { ...def, points };
+    });
+  }
+
   _buildRoads() {
     this.roads = [];
     this.samples = [];
-    for (const def of ROADS) {
+    for (const def of this._snapEndpoints()) {
       const closed = !!def.closed;
       const pts = sampleSpline(def.points, SPACING, !closed);
       const N = pts.length;
@@ -185,12 +229,18 @@ export class World {
         }
       }
     }
-    const R = 35; // samples of blend on each side (70 m)
+    // The bigger road keeps its height; the smaller one blends onto it over 100 m.
+    const RANK = { highway: 4, road: 3, street: 2, lane: 1, dirt: 0 };
+    const R = 50;
     for (const [i, j] of pairs) {
-      const target = (this.samples[i].p.y + this.samples[j].p.y) / 2;
+      const ra = this.roads[this.samples[i].road], rb = this.roads[this.samples[j].road];
+      const rankA = RANK[ra.kind], rankB = RANK[rb.kind];
+      const wA = rankA > rankB ? 1 : rankA < rankB ? 0 : 0.5;   // share of the final height taken from road A
+      const target = this.samples[i].p.y * wA + this.samples[j].p.y * (1 - wA);
       for (const c of [i, j]) {
         const road = this.roads[this.samples[c].road];
         const delta = target - this.samples[c].p.y;
+        if (Math.abs(delta) < 1e-4) continue;
         for (let k = -R; k <= R; k++) {
           const idx = this.roadWrap(road, c + k);
           if (idx < 0) continue;
@@ -199,7 +249,15 @@ export class World {
         }
       }
     }
+    this.junctionPairs = pairs;
     this.junctions = pairs.map(([i]) => i);
+    // per-road lists for traffic: [{ li, other }] sorted along the road
+    this.roadJunctions = this.roads.map(() => []);
+    for (const [i, j] of pairs) {
+      this.roadJunctions[this.samples[i].road].push({ li: this.samples[i].li, other: j });
+      this.roadJunctions[this.samples[j].road].push({ li: this.samples[j].li, other: i });
+    }
+    for (const list of this.roadJunctions) list.sort((a, b) => a.li - b.li);
   }
 
   _finishSamples() {

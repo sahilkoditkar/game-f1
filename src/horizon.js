@@ -8,6 +8,7 @@ import { DriftFx } from './fx.js';
 import { buildSun, aimSun, buildEnvironment, updateChaseCamera, snapChaseCamera } from './scenekit.js';
 import { addTrees } from './scenery.js';
 import { HorizonHUD } from './horizonhud.js';
+import { Traffic } from './traffic.js';
 import { getCar, PLAYER_COLORS } from './data.js';
 import { playerStats } from './career.js';
 import { getControl } from './input.js';
@@ -18,7 +19,7 @@ const SEG = 20;           // terrain cells per chunk side (10 m)
 const VIEW_R = 1150;      // chunks are kept within this radius of the player
 const clamp = THREE.MathUtils.clamp;
 
-const ROAD_COLORS = { highway: 0x3a3a40, road: 0x3c3c42, lane: 0x45444a, dirt: 0x8a7352, street: 0x36363c };
+const ROAD_COLORS = { highway: 0x3a3a40, road: 0x3c3c42, lane: 0x45444a, dirt: 0x8a7352, street: 0x36363c, pad: 0x3b3b41 };
 
 export class Horizon {
   /**
@@ -48,6 +49,7 @@ export class Horizon {
     this.paused = false; this.suspended = false;
     this.waypoint = null;
     this.prompt = null;
+    this.promptCooldown = 0;
     this.requestMap = false;
     this.drift = null;    // active drift zone run
     this.zone = null;     // active speed zone run
@@ -58,6 +60,7 @@ export class Horizon {
     this._buildStatic();
     this._buildProps();
     this._setupPlayer();
+    this.traffic = new Traffic(this, this.highQ ? 26 : 14);
     this.fx = new DriftFx(this.scene, this.world, this.quality);
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.5, 6000);
     this.camera.userData.shake = 0;
@@ -123,6 +126,19 @@ export class Horizon {
       const L = this._strip(road, (s) => s.hw + shW, (s) => s.hw, yOuter, street ? yo + 0.14 : yo);
       const R = this._strip(road, (s) => -s.hw, (s) => -s.hw - shW, street ? yo + 0.14 : yo, yOuter);
       for (const sg of [L, R]) { const sm = new THREE.Mesh(sg, shMat); sm.receiveShadow = true; g.add(sm); }
+    }
+    // Junction pads: a plain asphalt disc over every crossing and T-junction so the
+    // two roads' edges, kerbs and markings don't collide where they meet.
+    const padTex = makeWorldRoadTexture('pad', 0);
+    const padMat = new THREE.MeshStandardMaterial({ map: padTex, roughness: 0.9, metalness: 0.02, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    for (const [i, j] of this.world.junctionPairs) {
+      const a = this.world.samples[i], b = this.world.samples[j];
+      const r = Math.max(a.hw, b.hw) + 2.2;
+      const pad = new THREE.Mesh(new THREE.CircleGeometry(r, 28), padMat);
+      pad.rotation.x = -Math.PI / 2;
+      pad.position.set((a.p.x + b.p.x) / 2, Math.max(a.p.y, b.p.y) + Math.max(this.world.roadOf(i).yOff, this.world.roadOf(j).yOff) + 0.02, (a.p.z + b.p.z) / 2);
+      pad.receiveShadow = true;
+      g.add(pad);
     }
     this.roadGroup = g;
     this.scene.add(g);
@@ -234,7 +250,7 @@ export class Horizon {
       const s = W.samples[e.idx];
       g.add(makeSign(e.name, e.track.kind === 'stage' ? '#3ddc84' : '#ff5a1f', e.x, e.y, e.z, s.heading + Math.PI / 2 * e.side));
       g.add(makeBeam(e.track.kind === 'stage' ? 0x3ddc84 : 0xff8a3d, e.x, e.y, e.z, 70));
-      const ring = new THREE.Mesh(new THREE.RingGeometry(Math.min(s.hw, 7) - 1.2, Math.min(s.hw, 7), 40), new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+      const ring = new THREE.Mesh(new THREE.RingGeometry(Math.max(6, s.hw + 1) - 1.4, Math.max(6, s.hw + 1), 48), new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
       ring.rotation.x = -Math.PI / 2; ring.position.set(s.p.x, s.p.y + W.roadOf(e.idx).yOff + 0.06, s.p.z);
       g.add(ring); this.eventRings.push(ring);
     }
@@ -463,6 +479,8 @@ export class Horizon {
       car.update(sdt, { track: this.world, live: true });
       this._collideWorld(car);
     }
+    this.traffic.update(dt);
+    if (car.carHit > 3) { this.camera.userData.shake = Math.max(this.camera.userData.shake, 0.25); this.audio.impact(car.carHit * 0.6); car.carHit = 0; }
     const moved = Math.hypot(car.pos.x - prevPos.x, car.pos.z - prevPos.z);
     this.prog.stats.distance = (this.prog.stats.distance || 0) + moved / 1000;
 
@@ -640,6 +658,12 @@ export class Horizon {
     }
   }
 
+  /** Passing traffic closely at speed. */
+  nearMiss() {
+    this.hud.toast('NEAR MISS +40 XP');
+    this.prog.xp += 40;
+  }
+
   _updateBoards(car) {
     if (car.speed < 3) return;
     for (const b of this.world.boards) {
@@ -671,7 +695,8 @@ export class Horizon {
       if (m.kind === 'event') {
         const s = W.samples[m.idx];
         const ex = car.pos.x - s.p.x, ez = car.pos.z - s.p.z;
-        if (ex * ex + ez * ez < 13 * 13) this.prompt = m;
+        const r = Math.max(15, s.hw + 5);
+        if (ex * ex + ez * ez < r * r) this.prompt = m;
       }
     }
     if (this.waypoint) {
@@ -839,7 +864,7 @@ function makeWorldRoadTexture(kind, width) {
   const img = ctx.getImageData(0, 0, 256, 256);
   for (let i = 0; i < img.data.length; i += 4) { const n = (Math.random() - 0.5) * (kind === 'dirt' ? 40 : 26); img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n; }
   ctx.putImageData(img, 0, 0);
-  if (kind !== 'dirt') {
+  if (kind !== 'dirt' && kind !== 'pad') {
     ctx.fillStyle = 'rgba(255,255,255,0.8)';
     ctx.fillRect(5, 0, 4, 256); ctx.fillRect(247, 0, 4, 256);
     if (kind === 'highway') {

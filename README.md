@@ -14,7 +14,8 @@ hosted directly on GitHub Pages (or any static host).
   Dynamic AI, with prize money and XP. Ten speed traps, six drift zones, four speed zones and forty bonus
   boards give star ratings and XP; levels pay out credits. A full map (M) shows roads, regions and
   markers, sets waypoints and fast-travels to places you have discovered. Your position and all progress
-  save in the browser.
+  save in the browser. Ambient traffic drives the network in its lane, slows for corners, queues behind
+  you, turns at junctions and can be hit (or passed closely for a near-miss XP bonus).
 
 - Sixteen circuits with elevation: eight original themed tracks (club circuit, coast, harbour,
   desert, canyon, alpine, forest, neon night city) and eight layouts inspired by real-world
