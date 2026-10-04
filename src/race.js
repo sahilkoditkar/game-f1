@@ -3,6 +3,7 @@ import { Track } from './track.js';
 import { buildScenery } from './scenery.js';
 import { Car, makeGhost } from './car.js';
 import { driveAI } from './ai.js';
+import { collideCars, crashShake } from './crash.js';
 import { HUD } from './hud.js';
 import { DriftFx } from './fx.js';
 import { buildSun, aimSun, buildEnvironment, updateChaseCamera, snapChaseCamera } from './scenekit.js';
@@ -251,7 +252,8 @@ export class Race {
     this.players.forEach((car, i) => {
       const cam = this.cameras[i];
       if (car.wallHit > 4) { cam.userData.shake = Math.min(0.6, car.wallHit * 0.05); this.audio.impact(car.wallHit); }
-      if (car.carHit > 3) { cam.userData.shake = Math.max(cam.userData.shake, 0.25); this.audio.impact(car.carHit * 0.6); car.carHit = 0; }
+      if (car.carHit > 1.5) { cam.userData.shake = Math.max(cam.userData.shake, crashShake(car.carHit)); this.audio.impact(car.carHit); }
+      car.carHit = 0;
       this._updateCamera(cam, car, dt);
       const v = this.engineVoices[i];
       if (v) this.audio.updateEngine(v, clamp(car.speed / car.stats.maxSpeed, 0, 1), car.input.throttle, car.drifting || (car.input.handbrake && car.speed > 5), (this.players.length > 1 ? 0.7 : 1) * (car.finished ? 0.25 : 1));
@@ -284,34 +286,16 @@ export class Race {
     }
   }
 
+  /** Car-to-car contact as rigid-body crashes: mass, where they touch, spin (see crash.js). */
   _collideCars() {
-    const cars = this.cars, R = 2.1;
+    const cars = this.cars;
     for (let i = 0; i < cars.length; i++) {
       const a = cars[i];
       if (a.parked) continue;
       for (let j = i + 1; j < cars.length; j++) {
         const b = cars[j];
         if (b.parked) continue;
-        const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
-        const d2 = dx * dx + dz * dz;
-        if (d2 > R * R || d2 === 0) continue;
-        const d = Math.sqrt(d2), nx = dx / d, nz = dz / d;
-        const pen = R - d;
-        a.pos.x -= nx * pen * 0.5; a.pos.z -= nz * pen * 0.5;
-        b.pos.x += nx * pen * 0.5; b.pos.z += nz * pen * 0.5;
-        const rvx = b.vel.x - a.vel.x, rvz = b.vel.z - a.vel.z;
-        const vn = rvx * nx + rvz * nz;
-        if (vn < 0) {
-          const jImp = -(1 + 0.35) * vn * 0.5;
-          a.vel.x -= nx * jImp; a.vel.z -= nz * jImp;
-          b.vel.x += nx * jImp; b.vel.z += nz * jImp;
-          for (const c of [a, b]) {
-            const fx = Math.sin(c.heading), fz = Math.cos(c.heading);
-            c.vf = c.vel.x * fx + c.vel.z * fz;
-            c.vr = c.vel.x * (-fz) + c.vel.z * fx;
-            c.carHit = Math.max(c.carHit, Math.abs(vn));
-          }
-        }
+        collideCars(a, b);
       }
     }
   }

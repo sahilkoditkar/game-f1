@@ -15,6 +15,7 @@ import { getTrack } from './tracks.js';
 import { playerStats, seriesState, seriesLock } from './career.js';
 import { getControl } from './input.js';
 import { WORLD_HALF, SEA_Z, SEA_LEVEL, CITY, BOARD_XP, REGIONS, levelForXp } from './worlddef.js';
+import { crashShake } from './crash.js';
 
 const CHUNK = 200;        // metres
 const SEG = 20;           // terrain cells per chunk side (10 m)
@@ -567,7 +568,14 @@ export class Horizon {
       this._collideWorld(car);
     }
     this.traffic.update(dt);
-    if (car.carHit > 3) { this.camera.userData.shake = Math.max(this.camera.userData.shake, 0.25); this.audio.impact(car.carHit * 0.6); car.carHit = 0; }
+    // car-to-car hits: shake and sound scale with the change of speed (ΔV) the hit gave us
+    this.crashCd = (this.crashCd || 0) - dt;
+    if (car.carHit > 1.5) {
+      this.camera.userData.shake = Math.max(this.camera.userData.shake, crashShake(car.carHit));
+      this.audio.impact(car.carHit);
+      if (car.carHit > 6 && this.crashCd <= 0) { this.crashCd = 2; this.hud.toast(`Crash · ΔV ${Math.round(car.carHit * 3.6)} km/h`); }
+    }
+    car.carHit = 0;
     const moved = Math.hypot(car.pos.x - prevPos.x, car.pos.z - prevPos.z);
     this.prog.stats.distance = (this.prog.stats.distance || 0) + moved / 1000;
 

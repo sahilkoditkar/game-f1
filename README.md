@@ -61,7 +61,16 @@ hosted directly on GitHub Pages (or any static host).
   liveries, and wheels with brake discs and calipers. Race cars carry per-car numbers and livery
   colours. Open `showroom.html` to inspect every car up close.
 - Arcade driving model with a grip-limited bicycle steering model, off-road grip loss (the
-  rally car barely cares), slope gravity, barrier and car-to-car collisions.
+  rally car barely cares), slope gravity and barrier collisions.
+- To change the island's roads, city, regions or markers yourself, see [MAP-GUIDE.md](MAP-GUIDE.md).
+- **Crashes with real impulse physics** (`src/crash.js`): every car is a box with its own mass and
+  yaw inertia. The contact point and normal come from the two footprints; the impulse
+  `j = -(1+e)·vn / (1/mA + 1/mB + (r⊥A·n)²/IA + (r⊥B·n)²/IB)` plus Coulomb friction sets both cars'
+  new speed, direction and spin. Restitution falls with impact speed (metal crumples), so a nudge
+  bounces and a big hit mostly sticks; momentum is conserved and energy only ever lost. Hitting a
+  corner spins a car (PIT manoeuvre), a heavy car shoves a light one further, and camera shake, sound
+  and a "Crash · ΔV" readout scale with the change of speed. Traffic you hit slides free, spins, skids
+  to a stop, can knock into other traffic, then pulls back into its lane.
 - Proper drifting: tap the handbrake while turning and the rear steps out. Throttle holds the
   slide, steering into the corner deepens the angle, counter-steering or lifting off lets the
   tyres hook up again. A long handbrake pull spins the car round for a handbrake turn.
