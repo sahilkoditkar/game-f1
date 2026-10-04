@@ -28,6 +28,15 @@ hosted directly on GitHub Pages (or any static host).
   have discovered. Your position and all progress
   save in the browser. Ambient traffic drives the network in its lane, slows for corners, queues behind
   you, turns at junctions and can be hit (or passed closely for a near-miss XP bonus).
+- **One career, in the world**: Play drops you on the island, and that *is* the career. One wallet
+  (shown on every screen and on the HUD, with a "+N cr" pop) collects everything: events, the four
+  championships, speed traps, drift zones, bonus boards and level-ups. The championships (Rookie Cup →
+  Pro Series → Grand Prix → Legends Endurance) are gold venues on the map: drive up and press Enter to
+  see the rounds and standings and race the next round, then you're back on the island. The bigger
+  ones need a level as well as a result in the series before. **Festival HQ**, next to the festival
+  start, is the garage: drive onto its pad to buy cars, upgrade and paint them, and drive away in the
+  new one (or pause → Go to garage to fast-travel there). New players get a short guided first drive.
+  Quick Race, Split Screen and Time Trial are the **Arcade**: every car unlocked, no credits or XP.
 
 - Sixteen circuits with elevation: eight original themed tracks (club circuit, coast, harbour,
   desert, canyon, alpine, forest, neon night city) and eight layouts inspired by real-world
@@ -52,9 +61,8 @@ hosted directly on GitHub Pages (or any static host).
   Sliding tyres lay rubber on the road and throw up smoke (or dust off the track).
 - **Split-screen multiplayer**: two players on one keyboard (WASD vs arrow keys) or two gamepads.
   The screen splits left/right on wide displays and top/bottom on tall ones.
-- **Career mode**: four championships (Rookie Cup → Pro Series → Grand Prix → Legends Endurance),
-  points standings, prize money, a garage with four purchasable cars and four upgrade lines.
-  Progress is saved in the browser (`localStorage`).
+- Championships have points standings and prize money; the garage sells nine cars and has four
+  upgrade lines and paint. Progress is saved in the browser (`localStorage`).
 - Quick Race and Time Trial modes with adjustable laps, opponent count and AI difficulty
   (Easy, Medium, Hard, or **Dynamic**, where the AI measures its time gap to you continuously and
   paces itself around you: a couple of drivers just ahead, most just behind, on circuits and stages).

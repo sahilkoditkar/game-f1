@@ -10,8 +10,9 @@ import { addTrees } from './scenery.js';
 import { HorizonHUD } from './horizonhud.js';
 import { Traffic } from './traffic.js';
 import { PropKit, mergeByMaterial } from './props.js';
-import { getCar, PLAYER_COLORS } from './data.js';
-import { playerStats } from './career.js';
+import { getCar, getSeries, PLAYER_COLORS } from './data.js';
+import { getTrack } from './tracks.js';
+import { playerStats, seriesState, seriesLock } from './career.js';
 import { getControl } from './input.js';
 import { WORLD_HALF, SEA_Z, SEA_LEVEL, CITY, BOARD_XP, REGIONS, levelForXp } from './worlddef.js';
 
@@ -25,6 +26,7 @@ const ROAD_COLORS = { highway: 0x3a3a40, road: 0x3c3c42, lane: 0x45444a, dirt: 0
 export class Horizon {
   /**
    * @param {object} o { renderer, input, audio, profile, quality, onEvent(marker), onSave(), onLevel(level) }
+   *   onEvent is called with the marker the player pressed Enter at: an event, a championship venue or a garage.
    */
   constructor(o) {
     this.renderer = o.renderer; this.input = o.input; this.audio = o.audio; this.profile = o.profile;
@@ -75,6 +77,7 @@ export class Horizon {
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.5, 6000);
     this.camera.userData.shake = 0;
     this.hud = new HorizonHUD(this);
+    if (['new', 'moved', 'event'].includes(this.prog.guide)) this._guideStep(this.prog.guide);
     this.resize();
     this._streamChunks(true);
     snapChaseCamera(this.camera, this.car, this.tmp2);
@@ -83,18 +86,75 @@ export class Horizon {
   }
 
   // ------------------------------------------------------------ Setup
-  _setupPlayer() {
+  _makeCar() {
     const p = this.profile;
     const carDef = getCar(p.selected);
     this.car = new Car({ name: p.name, color: PLAYER_COLORS[p.colorIndex || 0], stats: playerStats(p), shape: carDef.shape, isPlayer: true, playerIndex: 0, quality: this.quality });
     this.scene.add(this.car.mesh);
-    const saved = this.prog.pos;
+  }
+
+  _setupPlayer() {
+    // the first-drive guide: brand-new players get the full tour, everyone else a pointer to the new garage
+    const P = this.prog;
+    if (!P.guide) P.guide = (P.xp || 0) === 0 && !P.pos && !(P.discovered || []).length ? 'new' : 'moved';
+    if (!P.discovered.includes('hq')) P.discovered.push('hq');   // Festival HQ is always on the map
+    this._makeCar();
+    const saved = P.pos;
     if (saved && Math.abs(saved[0]) < WORLD_HALF && Math.abs(saved[1]) < WORLD_HALF && coastDist(saved[0], saved[1]) > 20) {
       const idx = this.world.nearestGlobal(saved[0], saved[1]).idx;
       this.car.trackIdx = Math.max(0, idx);
       this.tmp.set(saved[0], 0, saved[1]);
       this.car.place(saved[0], saved[1], saved[2], this.world.heightAtPos(this.tmp, this.car.trackIdx));
-    } else this.placeAt(this.world.hub.idx);
+    } else {
+      // a fresh start: on the ring just short of Festival HQ, driving toward it
+      const hq = this.world.garages[0];
+      this.placeAt(this.world.roadWrap(this.world.roadOf(hq.idx), hq.idx - 30, true));
+    }
+  }
+
+  /** After the garage: drive away in whichever car is now selected, with its upgrades and paint. */
+  swapCar() {
+    const old = this.car;
+    const { x, z } = old.pos, heading = old.heading, idx = old.trackIdx, y = old.pos.y;
+    this.scene.remove(old.mesh);
+    disposeGroup(old.mesh);
+    this._makeCar();
+    this.car.trackIdx = idx;
+    this.car.place(x, z, heading, y);
+    snapChaseCamera(this.camera, this.car, this.tmp2);
+  }
+
+  /** The guide banner for the current step (null hides it). */
+  guideText() {
+    const g = this.prog.guide;
+    if (g === 'new') return { title: 'Welcome to Apex Horizon', text: 'This is Festival HQ, your garage. Drive onto the glowing pad by its doors and press Enter to see your cars.' };
+    if (g === 'moved') return { title: 'New: your garage is on the island', text: 'Cars, upgrades and championships now live in the world. Festival HQ is your garage: follow the purple route and press Enter on its pad.' };
+    if (g === 'event') return { title: 'One wallet for everything', text: 'Credits from events, championships, speed traps, drift zones and bonus boards all go to the wallet top right. Follow the route to your first event.' };
+    if (g === 'race') return { title: 'Press Enter to race', text: 'Championships are the gold trophy markers on the map (M). Higher levels unlock the bigger ones.' };
+    return null;
+  }
+
+  _guideStep(step) {
+    this.prog.guide = step;
+    this.guideTimer = 0;
+    const W = this.world;
+    if (step === 'new' || step === 'moved') this.setWaypoint(W.garages[0]);
+    if (step === 'event') {
+      // the nearest event by road from here
+      let best = null, bd = Infinity;
+      for (const e of W.events) { const r = W.route(this.car.trackIdx, e.idx); if (r && r.length < bd) { bd = r.length; best = e; } }
+      this.setWaypoint(best);
+    }
+    this.saveState();
+  }
+
+  skipGuide() { this._guideStep('done'); this.setWaypoint(null); }
+
+  /** Called when the player leaves the garage. */
+  onGarageClosed() {
+    if (this.prog.guide === 'new') this._guideStep('event');
+    else if (this.prog.guide === 'moved') this._guideStep('race');
+    this.promptCooldown = 1.5;
   }
 
   _setupAudio() { this.audio.init(); this.engine = this.audio.createEngine(); }
@@ -256,6 +316,24 @@ export class Horizon {
       const ring = new THREE.Mesh(new THREE.RingGeometry(Math.max(6, s.hw + 1) - 1.4, Math.max(6, s.hw + 1), 48), new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
       ring.rotation.x = -Math.PI / 2; ring.position.set(s.p.x, s.p.y + W.roadOf(e.idx).yOff + 0.06, s.p.z);
       g.add(ring); this.eventRings.push(ring);
+    }
+    // Championship venues: a gold gantry over the road, a trophy-gold beam and start ring
+    for (const c of W.championships) {
+      const s = W.samples[c.idx];
+      const gt = makeGantry(s.hw * 2 + 8, c.name, '#4a3600', '#ffd23f', 7.4);
+      gt.position.set(s.p.x, s.p.y, s.p.z); gt.rotation.y = s.heading; g.add(gt);
+      g.add(makeSign(c.name, '#ffd23f', c.x, c.y, c.z, s.heading + Math.PI / 2));
+      g.add(makeBeam(0xffd23f, c.x, c.y, c.z, 110));
+      const ring = new THREE.Mesh(new THREE.RingGeometry(Math.max(6, s.hw + 1) - 1.4, Math.max(6, s.hw + 1), 48), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+      ring.rotation.x = -Math.PI / 2; ring.position.set(s.p.x, s.p.y + W.roadOf(c.idx).yOff + 0.06, s.p.z);
+      g.add(ring); this.eventRings.push(ring);
+    }
+    // Garages: a teal pad on the forecourt (drive onto it) and a beam to find it from afar
+    for (const gr of W.garages) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(5.4, 7, 48), new THREE.MeshBasicMaterial({ color: 0x22d3b5, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }));
+      ring.rotation.x = -Math.PI / 2; ring.position.set(gr.x, gr.y + 0.1, gr.z);
+      g.add(ring); this.eventRings.push(ring);
+      g.add(makeBeam(0x22d3b5, gr.x, gr.y, gr.z, 90));
     }
     // Speed traps: a camera gantry across the road
     for (const t of W.traps) {
@@ -474,7 +552,11 @@ export class Horizon {
     const accept = this.input.justPressed('Enter') || this.input.justPressed('NumpadEnter') || this.input.justPressed('KeyE') || this._padJust(0);
     if ((this.input.justPressed('KeyM') || this.input.justPressed('Tab') || this._padJust(8))) this.requestMap = true;
     if (this.promptCooldown > 0) this.promptCooldown -= dt;
-    if (accept && this.prompt && this.promptCooldown <= 0) { this.onEvent(this.prompt); return; }
+    if (accept && this.prompt && this.promptCooldown <= 0) {
+      if (this.prompt.kind === 'event' && (this.prog.guide === 'event' || this.prog.guide === 'race')) this._guideStep('done');
+      this.onEvent(this.prompt);
+      return;
+    }
 
     const prevIdx = car.trackIdx;
     const prevPos = this.tmp.copy(car.pos);
@@ -708,13 +790,17 @@ export class Horizon {
         this.hud.toast(`Discovered ${m.name}`);
         this.addXp(100);
       }
-      if (m.kind === 'event') {
+      if (m.kind === 'event' || m.kind === 'series') {
         const s = W.samples[m.idx];
         const ex = car.pos.x - s.p.x, ez = car.pos.z - s.p.z;
         const r = Math.max(15, s.hw + 5);
         if (ex * ex + ez * ez < r * r) this.prompt = m;
-      }
+      } else if (m.kind === 'garage' && d2 < 9 * 9) this.prompt = m;
     }
+    // guide: reaching the first event's ring moves the tour on; the last tip times out
+    this.guideTimer = (this.guideTimer || 0) + 1 / 60;
+    if (this.prog.guide === 'event' && this.prompt && this.prompt.kind === 'event') this._guideStep('race');
+    else if (this.prog.guide === 'race' && this.guideTimer > 14) this._guideStep('done');
     if (this.waypoint) {
       const d = Math.hypot(car.pos.x - this.waypoint.x, car.pos.z - this.waypoint.z);
       if (d < 35) { this.hud.toast(`Arrived: ${this.waypoint.kind === 'custom' ? 'waypoint' : this.waypoint.name}`); this.setWaypoint(null); }
@@ -743,7 +829,21 @@ export class Horizon {
     if (m.kind === 'drift') return P.drifts[m.id] ? `${P.drifts[m.id].toLocaleString()} pts · ${this._starStr(this._stars(P.drifts[m.id], m.stars))}` : 'Not set';
     if (m.kind === 'zone') return P.zones[m.id] ? `${P.zones[m.id]} km/h avg · ${this._starStr(this._stars(P.zones[m.id], m.stars))}` : 'Not set';
     if (m.kind === 'event') return P.events[m.id] ? `Best finish: P${P.events[m.id]}` : 'Not raced yet';
+    if (m.kind === 'series') return this.seriesStatus(m.series).text;
+    if (m.kind === 'garage') return 'Buy cars, upgrade, paint';
     return '';
+  }
+
+  /** A championship's state for prompts and the map: { text, locked, next }. */
+  seriesStatus(id) {
+    const series = getSeries(id), st = seriesState(this.profile, id), lock = seriesLock(this.profile, series);
+    if (lock) {
+      const why = [lock.rank ? `finish ${series.requireRank === 1 ? '1st' : 'top ' + series.requireRank} in ${getSeries(series.requires).name}` : '', lock.level ? `reach level ${series.level}` : ''].filter(Boolean).join(' and ');
+      return { locked: true, text: `Locked: ${why}` };
+    }
+    if (st.complete) return { text: st.finalRank === 1 ? 'Champion 🏆' : `Finished ${st.finalRank}${['th', 'st', 'nd', 'rd'][st.finalRank] || 'th'}` };
+    const next = series.events[st.event];
+    return { next, nextName: getTrack(next.track).name, text: `Round ${st.event + 1} of ${series.events.length}` };
   }
 
   saveState() {

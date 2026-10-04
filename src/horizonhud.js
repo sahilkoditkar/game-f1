@@ -28,7 +28,7 @@ export class HorizonHUD {
     this.el.classList.remove('hidden');
     this.el.innerHTML = `
       <div class="hz-top-left">
-        <div class="hz-mode">FREE ROAM</div>
+        <div class="hz-mode">APEX HORIZON</div>
         <div class="hz-region">—</div>
         <div class="hz-road"></div>
       </div>
@@ -36,7 +36,7 @@ export class HorizonHUD {
       <div class="hz-top-right">
         <div class="hz-level">LEVEL <b>1</b></div>
         <div class="hz-xpbar"><i style="width:0%"></i></div>
-        <div class="hz-money">0 cr</div>
+        <div class="hz-wallet"><span>WALLET</span><b class="hz-money">0 cr</b><i class="hz-gain"></i></div>
       </div>
       <div class="bottom-right hz-br">
         <div class="speed"><b>0</b><small>km/h</small></div>
@@ -45,20 +45,23 @@ export class HorizonHUD {
       <canvas class="hz-radar"></canvas>
       <div class="hz-waypoint hidden"><span class="turn"></span><div><div class="instr"></div><div class="info"><b></b> · <span class="name"></span></div></div></div>
       <div class="hz-prompt hidden"></div>
+      <div class="hz-guide hidden"><div><b></b><span></span></div><button class="small ghost">Skip tour</button></div>
       <div class="hz-live hidden"><div class="label"></div><div class="score"></div></div>
       <div class="msg"><span class="main"></span><span class="sub"></span></div>
       <div class="hz-toasts"></div>
       <button class="hz-mapbtn">MAP</button>
-      <div class="hz-hint"><kbd>M</kbd> map · <kbd>Enter</kbd> start event · <kbd>R</kbd> back to road · <kbd>Esc</kbd> pause</div>`;
+      <div class="hz-hint"><kbd>M</kbd> map · <kbd>Enter</kbd> at a marker · <kbd>R</kbd> back to road · <kbd>Esc</kbd> pause</div>`;
     // Touch and mouse: tapping the prompt starts the event, the MAP button opens the map.
     this.el.querySelector('.hz-prompt').addEventListener('click', () => { if (this.hz.prompt && this.hz.promptCooldown <= 0) this.hz.onEvent(this.hz.prompt); });
     this.el.querySelector('.hz-mapbtn').addEventListener('click', () => { this.hz.requestMap = true; });
+    this.el.querySelector('.hz-guide button').addEventListener('click', () => this.hz.skipGuide());
     const q = (s) => this.el.querySelector(s);
     this.q = {
       region: q('.hz-region'), road: q('.hz-road'), compass: q('.hz-compass'), level: q('.hz-level b'), xp: q('.hz-xpbar i'), money: q('.hz-money'),
       speed: q('.speed b'), bar: q('.gear-bar i'), radar: q('.hz-radar'), wp: q('.hz-waypoint'), wpTurn: q('.hz-waypoint .turn'), wpInstr: q('.hz-waypoint .instr'), wpDist: q('.hz-waypoint .info b'), wpName: q('.hz-waypoint .name'),
       prompt: q('.hz-prompt'), live: q('.hz-live'), liveLabel: q('.hz-live .label'), liveScore: q('.hz-live .score'),
       msg: q('.msg'), msgMain: q('.msg .main'), msgSub: q('.msg .sub'), toasts: q('.hz-toasts'),
+      guide: q('.hz-guide'), guideTitle: q('.hz-guide b'), guideText: q('.hz-guide span'), gain: q('.hz-gain'),
     };
     this.regionTimer = 0;
   }
@@ -100,7 +103,19 @@ export class HorizonHUD {
       q.level.textContent = lv.level;
       q.xp.style.width = `${Math.round((lv.into / lv.need) * 100)}%`;
       q.money.textContent = `${Math.round(hz.profile.money).toLocaleString()} cr`;
+      // the guide banner
+      const g = hz.guideText();
+      q.guide.classList.toggle('hidden', !g);
+      if (g && q.guideTitle.textContent !== g.title) { q.guideTitle.textContent = g.title; q.guideText.textContent = g.text; }
     }
+    // a "+N cr" pop beside the wallet whenever money comes in
+    const money = Math.round(hz.profile.money);
+    if (this.lastMoney !== undefined && money > this.lastMoney) {
+      q.gain.textContent = `+${(money - this.lastMoney).toLocaleString()} cr`;
+      q.gain.classList.remove('pop'); void q.gain.offsetWidth; q.gain.classList.add('pop');
+      q.money.textContent = `${money.toLocaleString()} cr`;
+    }
+    this.lastMoney = money;
 
     // Waypoint: turn-by-turn from the GPS route
     if (hz.waypoint) {
@@ -116,11 +131,18 @@ export class HorizonHUD {
       q.wpName.textContent = hz.waypoint.kind === 'custom' ? 'Waypoint' : hz.waypoint.name;
     } else q.wp.classList.add('hidden');
 
-    // Event prompt
+    // Prompt at an event ring, a championship venue or a garage pad
     if (hz.prompt) {
       const e = hz.prompt;
       q.prompt.classList.remove('hidden');
-      q.prompt.innerHTML = `<kbd>Enter</kbd> Start <b>${e.name}</b> · ${e.track.kind === 'stage' ? 'point-to-point stage' : `${e.laps} laps`} · ${e.ai} rivals${hz.prog.events[e.id] ? ` · best P${hz.prog.events[e.id]}` : ''}`;
+      let html;
+      if (e.kind === 'garage') html = `<kbd>Enter</kbd> Open the garage at <b>${e.name}</b> · buy cars, upgrade, paint`;
+      else if (e.kind === 'series') {
+        const st = hz.seriesStatus(e.series);
+        html = st.locked ? `🔒 <b>${e.name}</b> · ${st.text.replace('Locked: ', '')} <span class="meta">(Enter for details)</span>`
+          : `<kbd>Enter</kbd> <b>${e.name}</b> · ${st.text}${st.next ? ` · next: ${st.nextName || ''}` : ''}`;
+      } else html = `<kbd>Enter</kbd> Start <b>${e.name}</b> · ${e.track.kind === 'stage' ? 'point-to-point stage' : `${e.laps} laps`} · ${e.ai} rivals${hz.prog.events[e.id] ? ` · best P${hz.prog.events[e.id]}` : ''}`;
+      if (q.prompt.innerHTML !== html) q.prompt.innerHTML = html;
     } else q.prompt.classList.add('hidden');
 
     // Live zone score
@@ -266,7 +288,7 @@ export class HorizonHUD {
       const p = toR(m.x, m.z);
       const done = m.kind === 'event' ? !!hz.prog.events[m.id] : false;
       if (inside(p, 6)) drawMarkerIcon(ctx, p.x, p.y, m, { done, locked: m.kind !== 'hub' && !hz.prog.discovered.includes(m.id) }, 7.5);
-      else if (m.kind === 'event' || m.kind === 'hub') {
+      else if (m.kind === 'event' || m.kind === 'hub' || m.kind === 'series' || m.kind === 'garage') {
         // nearby events peek in at the edge, like the games' radar blips
         const d = Math.hypot(m.x - car.pos.x, m.z - car.pos.z);
         if (d < this.radarSpan * 1.6) { const e = this._edge(cx, cy, p, cw, ch, inset); ctx.globalAlpha = 0.75; drawMarkerIcon(ctx, e.x, e.y, m, {}, 5.5); ctx.globalAlpha = 1; }

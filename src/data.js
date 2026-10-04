@@ -119,7 +119,7 @@ export const SERIES = [
   {
     id: 'rookie', name: 'Rookie Cup', tier: 1,
     desc: 'Three short races against club drivers. Win it to earn your Pro licence.',
-    aiCount: 5, aiSkill: 0.72, requires: null, requireRank: 3,
+    aiCount: 5, aiSkill: 0.72, requires: null, requireRank: 3, level: 1,
     prize: [3000, 2200, 1600, 1100, 800, 500],
     bonus: 6000,
     events: [
@@ -131,7 +131,7 @@ export const SERIES = [
   {
     id: 'pro', name: 'Pro Series', tier: 2,
     desc: 'Longer races, sharper opponents, real prize money.',
-    aiCount: 7, aiSkill: 0.9, requires: 'rookie', requireRank: 3,
+    aiCount: 7, aiSkill: 0.9, requires: 'rookie', requireRank: 3, level: 3,
     prize: [6000, 4400, 3200, 2400, 1800, 1200, 800, 500],
     bonus: 15000,
     events: [
@@ -145,7 +145,7 @@ export const SERIES = [
   {
     id: 'gp', name: 'Grand Prix Championship', tier: 3,
     desc: 'The world championship. Nine elite drivers, six circuits, no mercy.',
-    aiCount: 9, aiSkill: 1.0, requires: 'pro', requireRank: 2,
+    aiCount: 9, aiSkill: 1.0, requires: 'pro', requireRank: 2, level: 6,
     prize: [14000, 10000, 7500, 5500, 4000, 3000, 2200, 1500, 1000, 600],
     bonus: 40000,
     events: [
@@ -160,7 +160,7 @@ export const SERIES = [
   {
     id: 'legends', name: 'Legends Endurance', tier: 4,
     desc: 'Long-distance showdown for champions only. Everything you own, on the line.',
-    aiCount: 11, aiSkill: 1.06, requires: 'gp', requireRank: 1,
+    aiCount: 11, aiSkill: 1.06, requires: 'gp', requireRank: 1, level: 10,
     prize: [30000, 20000, 14000, 10000, 8000, 6000, 4500, 3500, 2500, 2000, 1500, 1000],
     bonus: 100000,
     events: [

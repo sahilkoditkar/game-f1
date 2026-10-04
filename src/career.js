@@ -1,4 +1,5 @@
 import { CARS, SERIES, UPGRADES, AI_DRIVERS, AI_COLORS, POINTS, upgradeCost, effectiveStats, getCar, getSeries } from './data.js';
+import { levelForXp } from './worlddef.js';
 
 const KEY = 'apexrush.save.v1';
 
@@ -13,9 +14,13 @@ export function defaultProfile() {
   };
 }
 
-/** Free Roam progress: XP, best ratings per skill marker, collected boards, event results, saved position. */
+/**
+ * Free Roam progress: XP, best ratings per skill marker, collected boards, event results,
+ * saved position, and where the player is in the first-drive guide ('new' → 'garage' →
+ * 'event' → 'done'; null = not decided yet, see Horizon).
+ */
 export function defaultHorizon() {
-  return { xp: 0, traps: {}, drifts: {}, zones: {}, boards: [], events: {}, discovered: [], pos: null, stats: { distance: 0 } };
+  return { xp: 0, traps: {}, drifts: {}, zones: {}, boards: [], events: {}, discovered: [], pos: null, stats: { distance: 0 }, guide: null };
 }
 
 export function loadProfile() {
@@ -41,11 +46,17 @@ export function seriesState(profile, id) {
   return profile.series[id];
 }
 
-export function isSeriesUnlocked(profile, series) {
-  if (!series.requires) return true;
-  const req = profile.series[series.requires];
-  return !!(req && req.complete && req.finalRank !== null && req.finalRank <= series.requireRank);
+/** Why a championship is locked ({ rank, level } flags), or null when it is open. */
+export function seriesLock(profile, series) {
+  const st = profile.series[series.id];
+  if (st && (st.event > 0 || st.complete)) return null;      // already started: never lock it again
+  const req = series.requires ? profile.series[series.requires] : null;
+  const rank = !!series.requires && !(req && req.complete && req.finalRank !== null && req.finalRank <= series.requireRank);
+  const level = levelForXp((profile.horizon || {}).xp || 0).level < (series.level || 1);
+  return rank || level ? { rank, level } : null;
 }
+
+export function isSeriesUnlocked(profile, series) { return !seriesLock(profile, series); }
 
 export function playerStats(profile, carId = profile.selected) {
   const car = getCar(carId);

@@ -6,9 +6,10 @@ import * as THREE from 'three';
 import { sampleSpline } from './track.js';
 import { THEMES } from './tracks.js';
 import {
-  ROADS, REGIONS, EVENTS, TRAPS, DRIFTS, SPEEDZONES, BOARD_COUNT, WORLD_HALF, SEA_LEVEL, CITY, COAST,
+  ROADS, REGIONS, EVENTS, TRAPS, DRIFTS, SPEEDZONES, BOARD_COUNT, WORLD_HALF, SEA_LEVEL, CITY, COAST, CHAMPIONSHIPS,
 } from './worlddef.js';
 import { getTrack } from './tracks.js';
+import { getSeries } from './data.js';
 
 const SPACING = 2;
 
@@ -159,15 +160,26 @@ export class World {
   terrainHeight(x, z) {
     const base = this.baseHeight(x, z);
     const near = this.nearestGlobal(x, z, 2);
-    if (near.idx < 0) return base;
+    if (near.idx < 0) return this._onPads(x, z, base);
     const s = this.samples[near.idx];
     // flat out to 8 m past the edge: the terrain mesh is a 10 m grid, so a hillside
     // vertex any closer would slope up through the asphalt between grid points
     const edge = s.hw + 8;
     const ry = s.yl === undefined ? s.p.y : this.surfaceAt(s, (x - s.p.x) * s.n.x + (z - s.p.z) * s.n.z);
-    if (near.dist <= edge) return ry - 0.12;
-    const k = smoothstep(edge, edge + 45, near.dist);
-    return (ry - 0.12) * (1 - k) + base * k;
+    let h;
+    if (near.dist <= edge) h = ry - 0.12;
+    else { const k = smoothstep(edge, edge + 45, near.dist); h = (ry - 0.12) * (1 - k) + base * k; }
+    return this._onPads(x, z, h);
+  }
+
+  /** Level ground under buildings with a forecourt (Festival HQ): flat inside, blended out over 30 m. */
+  _onPads(x, z, h) {
+    for (const p of this.pads || []) {
+      const d = Math.hypot(x - p.x, z - p.z);
+      if (d < p.r) return p.y - 0.02;
+      if (d < p.r + 30) { const k = smoothstep(p.r, p.r + 30, d); h = (p.y - 0.02) * (1 - k) + h * k; }
+    }
+    return h;
   }
 
   // ------------------------------------------------------------ Roads
@@ -710,6 +722,49 @@ export class World {
   /** Is `idx` inside the sample range [i0, i1] of its road (ranges never wrap). */
   inRange(idx, i0, i1) { return idx >= i0 && idx <= i1; }
 
+  // ------------------------------------------------------------ Garages & championship venues
+  /**
+   * Festival HQ: the garage, just past the festival start on the outside of the ring.
+   * Its marker sits on the forecourt in front of the door (drive onto it to open the
+   * garage); `idx` is the ring sample beside it (fast travel puts you there).
+   */
+  _placeGarages() {
+    const ring = this.getRoad('ring');
+    const idx = this.roadWrap(ring, this.hub.idx + 75, true);
+    const s = this.samples[idx];
+    const side = Math.sign(s.n.x * s.p.x + s.n.z * s.p.z) || 1;      // away from the island's centre
+    const at = (off) => ({ x: s.p.x + s.n.x * side * (s.hw + off), z: s.p.z + s.n.z * side * (s.hw + off) });
+    const fore = at(10), bld = at(30);
+    const rot = s.heading + (side > 0 ? Math.PI : 0);                 // the building's +x (door side) faces the road
+    this.pads = [{ x: at(18).x, z: at(18).z, r: 26, y: s.p.y }];
+    this.garages = [{ id: 'hq', kind: 'garage', name: 'Festival HQ', idx, x: fore.x, z: fore.z, y: s.p.y, rot, building: { x: bld.x, z: bld.z, rot } }];
+  }
+
+  /** A venue per championship on a quiet stretch of its road, with a gantry across it like an event. */
+  _placeChampionships(roadside) {
+    const taken = [this.hub, ...this.garages, ...this.events, ...this.traps,
+      ...[...this.drifts, ...this.zones].flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p])];
+    const jpts = this.junctionPairs.map(([a]) => this.samples[a].p);
+    this.championships = CHAMPIONSHIPS.map(c => {
+      const road = this.getRoad(c.road);
+      const start = this.indexNear(c.road, c.at[0], c.at[1]);
+      const ok = (i) => {
+        const p = this.samples[i].p;
+        return !this.samples[i].jz && jpts.every(q => Math.hypot(q.x - p.x, q.z - p.z) > 110) && taken.every(q => Math.hypot(q.x - p.x, q.z - p.z) > 160);
+      };
+      let idx = start;
+      for (let k = 0; k < road.n; k++) {
+        const a = this.roadWrap(road, start + k), b = this.roadWrap(road, start - k);
+        if (a >= 0 && ok(a)) { idx = a; break; }
+        if (b >= 0 && ok(b)) { idx = b; break; }
+      }
+      const series = getSeries(c.series);
+      const m = { id: `champ-${c.series}`, kind: 'series', series: c.series, name: series.name, idx, ...roadside(idx, 1, 6), heading: this.samples[idx].heading };
+      taken.push(m);
+      return m;
+    });
+  }
+
   // ------------------------------------------------------------ Route finding (GPS)
   /**
    * Road graph for the GPS: a node at every junction and open road end, an edge for
@@ -885,6 +940,8 @@ export class World {
     };
     this.drifts = DRIFTS.map(z => ({ ...span(z), kind: 'drift', name: 'Drift Zone' }));
     this.zones = SPEEDZONES.map(z => ({ ...span(z), kind: 'zone', name: 'Speed Zone' }));
+    this._placeGarages();
+    this._placeChampionships(roadside);
     // Bonus boards: deterministic positions beside roads, never in the sea or on a road.
     const rand = mulberry32(90210);
     this.boards = [];
@@ -902,7 +959,7 @@ export class World {
       if (this.boards.some(b => Math.hypot(b.x - x, b.z - z) < 250)) continue;
       this.boards.push({ id: `board-${this.boards.length}`, kind: 'board', name: 'Bonus Board', x, z, y: this.terrainHeight(x, z), heading: s.heading + Math.PI / 2 * side, idx });
     }
-    this.markers = [this.hub, ...this.events, ...this.traps, ...this.drifts, ...this.zones];
+    this.markers = [this.hub, ...this.garages, ...this.championships, ...this.events, ...this.traps, ...this.drifts, ...this.zones];
   }
 }
 
@@ -925,6 +982,7 @@ const KINDS = {
   hut: { w: [3.6, 4.4], d: [3.6, 4.4], h: [2.6, 3], solid: true, map: true },
   lifeguard: { w: [3.2, 3.2], d: [3.2, 3.2], h: [5, 5], solid: true, map: true },
   gas: { w: [28, 28], d: [18, 18], h: [5.5, 5.5], solid: false, map: true },
+  hq: { w: [22, 22], d: [36, 36], h: [9, 9], solid: true, map: true },
   billboard: { w: [2, 2], d: [11, 11], h: [9, 9], solid: false },
   sign: { w: [1, 1], d: [5.4, 5.4], h: [4.6, 4.6], solid: false },
   pole: { w: [0.5, 0.5], d: [0.5, 0.5], h: [9, 9], solid: true },
@@ -946,7 +1004,8 @@ Object.assign(World.prototype, {
     this.props = [];
     const grid = new Map();
     const cellOf = (x, z) => `${Math.floor(x / 30)},${Math.floor(z / 30)}`;
-    const avoid = [this.hub, ...this.events, ...this.traps, ...this.boards,
+    const avoid = [this.hub, ...this.events, ...this.traps, ...this.boards, ...this.championships,
+      ...this.garages.flatMap(g => [{ x: g.x, z: g.z, avoidR: 12 }, { x: g.building.x, z: g.building.z, avoidR: 22 }]),
       ...this.drifts.flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p]), ...this.zones.flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p])];
     const cityPad = 90;
     const free = (x, z, r, roadGap, coastGap = 35) => {
@@ -954,7 +1013,7 @@ Object.assign(World.prototype, {
       if (x > CITY.x0 - cityPad && x < CITY.x1 + cityPad && z > CITY.z0 - cityPad && z < CITY.z1 + cityPad) return false;
       const near = this.nearestGlobal(x, z, 2);
       if (near.idx >= 0 && near.dist - this.samples[near.idx].hw < r + roadGap) return false;
-      for (const a of avoid) if (Math.hypot(a.x - x, a.z - z) < r + 26) return false;
+      for (const a of avoid) if (Math.hypot(a.x - x, a.z - z) < r + 26 + (a.avoidR || 0)) return false;
       const cx = Math.floor(x / 30), cz = Math.floor(z / 30);
       for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
         for (const p of grid.get(`${cx + dx},${cz + dz}`) || []) if (Math.hypot(p.x - x, p.z - z) < p.r + r + 1.5) return false;
@@ -987,6 +1046,9 @@ Object.assign(World.prototype, {
       for (let i = 0; i < this.count; i += 6) { const p = this.samples[i].p; if (Math.abs(p.x - x) < rad && Math.abs(p.z - z) < rad && Math.hypot(p.x - x, p.z - z) < rad) out.push(i); }
       return out;
     };
+
+    // 0. Festival HQ's building (its forecourt is part of the model)
+    for (const g of this.garages) add('hq', g.building.x, g.building.z, g.building.rot);
 
     // 1. Direction signs before junctions (placed first: they matter most)
     this.signs = [];

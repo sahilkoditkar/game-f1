@@ -17,7 +17,7 @@ export const ROAD_STYLE = {
 const ROAD_ORDER = ['dirt', 'lane', 'street', 'road', 'highway'];
 export const ROUTE_COLOR = '#c45bff';
 
-export const MARKER_COLORS = { hub: '#ffd23f', event: '#ff5a1f', stage: '#2fcf78', trap: '#2f7bff', drift: '#b04cff', zone: '#00c2e8', board: '#3ddc84', custom: '#ffd23f' };
+export const MARKER_COLORS = { hub: '#ffd23f', event: '#ff5a1f', stage: '#2fcf78', trap: '#2f7bff', drift: '#b04cff', zone: '#00c2e8', board: '#3ddc84', custom: '#ffd23f', series: '#e8b923', garage: '#14b8a6' };
 export const markerCategory = (m) => m.kind === 'event' ? (m.track.kind === 'stage' ? 'stage' : 'event') : m.kind;
 
 // ------------------------------------------------------------------ Terrain layer
@@ -213,7 +213,7 @@ export function drawMarkerIcon(ctx, x, y, m, state = {}, r = 11) {
     ctx.restore();
     return;
   }
-  const R = cat === 'hub' ? r * 1.3 : r;
+  const R = cat === 'hub' || cat === 'series' || cat === 'garage' ? r * 1.25 : r;
   ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
@@ -226,6 +226,20 @@ export function drawMarkerIcon(ctx, x, y, m, state = {}, r = 11) {
     ctx.beginPath();
     for (let i = 0; i < 10; i++) { const rr = i % 2 ? g * 0.45 : g * 1.05, a = -Math.PI / 2 + i * Math.PI / 5; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
     ctx.closePath(); ctx.fillStyle = '#5a3d00'; ctx.fill();
+  } else if (cat === 'series') {
+    // trophy
+    ctx.beginPath(); ctx.moveTo(-g * 0.75, -g * 0.85); ctx.lineTo(g * 0.75, -g * 0.85); ctx.lineTo(g * 0.55, -g * 0.05);
+    ctx.quadraticCurveTo(0, g * 0.35, -g * 0.55, -g * 0.05); ctx.closePath(); ctx.fill();
+    ctx.fillRect(-g * 0.12, g * 0.1, g * 0.24, g * 0.45); ctx.fillRect(-g * 0.5, g * 0.55, g, g * 0.25);
+    ctx.lineWidth = g * 0.16; ctx.beginPath(); ctx.arc(-g * 0.75, -g * 0.45, g * 0.3, Math.PI * 0.5, Math.PI * 1.5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(g * 0.75, -g * 0.45, g * 0.3, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();
+  } else if (cat === 'garage') {
+    // wrench
+    ctx.save(); ctx.rotate(-Math.PI / 4);
+    ctx.fillRect(-g * 0.17, -g * 0.35, g * 0.34, g * 1.25);
+    ctx.beginPath(); ctx.arc(0, -g * 0.55, g * 0.48, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = MARKER_COLORS.garage; ctx.fillRect(-g * 0.15, -g * 1.1, g * 0.3, g * 0.55);
+    ctx.restore();
   } else if (cat === 'event' || cat === 'stage') {
     // chequered flag on a pole
     ctx.fillRect(-g * 0.75, -g, g * 0.2, g * 2);
@@ -319,7 +333,7 @@ function roadLabelSpots(world) {
 
 // ------------------------------------------------------------------ Map screen
 const FILTERS = [
-  { id: 'event', label: 'Circuits' }, { id: 'stage', label: 'Stages' }, { id: 'trap', label: 'Speed traps' },
+  { id: 'series', label: 'Championships' }, { id: 'event', label: 'Circuits' }, { id: 'stage', label: 'Stages' }, { id: 'trap', label: 'Speed traps' },
   { id: 'drift', label: 'Drift zones' }, { id: 'zone', label: 'Speed zones' }, { id: 'board', label: 'Bonus boards' },
 ];
 
@@ -532,7 +546,7 @@ export class WorldMap {
     const W = this.world, out = [];
     for (const m of W.markers) {
       const cat = markerCategory(m);
-      if (cat !== 'hub' && !this.filters[cat]) continue;
+      if (cat !== 'hub' && cat !== 'garage' && this.filters[cat] === false) continue;
       out.push(m);
     }
     if (this.filters.board) for (const b of W.boards) if (!this.hz.prog.boards.includes(b.id)) out.push(b);
@@ -616,6 +630,7 @@ export class WorldMap {
   _kindName(m) {
     return {
       hub: 'Festival hub', trap: 'Speed trap', drift: 'Drift zone', zone: 'Speed zone', board: 'Bonus board', custom: m.name,
+      series: 'Championship', garage: 'Garage · cars, upgrades, paint',
       event: m.track ? (m.track.kind === 'stage' ? 'Point-to-point stage' : 'Circuit race') : 'Event',
     }[m.kind];
   }
@@ -634,7 +649,8 @@ export class WorldMap {
     const travel = this._canTravel(m);
     const title = m.kind === 'custom' ? 'Custom waypoint' : m.name;
     const sub = m.kind === 'custom' ? `${m.name} · ${region}` : `${this._kindName(m)} · ${region}`;
-    const extra = m.kind === 'event' ? `${m.track.desc}<br>${m.track.open ? 'Stage' : m.laps + ' laps'} · ${m.ai} rivals` : '';
+    const extra = m.kind === 'event' ? `${m.track.desc}<br>${m.track.open ? 'Stage' : m.laps + ' laps'} · ${m.ai} rivals`
+      : m.kind === 'series' ? (() => { const st = hz.seriesStatus(m.series); return st.next ? `${st.text} · next: ${st.nextName}` : st.text; })() : '';
     box.innerHTML = `
       <div class="hzmap-sel-head"><canvas width="56" height="56"></canvas><div><h4>${title}</h4><div class="meta">${sub}</div></div></div>
       ${extra ? `<div class="meta hzmap-extra" style="margin-top:8px">${extra}</div>` : ''}

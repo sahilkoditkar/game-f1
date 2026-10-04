@@ -11,7 +11,7 @@ const HUT_COLORS = [0xff6f61, 0x4ecdc4, 0xffd93d, 0x6c5ce7, 0xff9ff3, 0x48dbfb];
 export const PROP_MAP_COLORS = {
   house: (p) => '#' + HOUSE_ROOFS[p.variant].toString(16).padStart(6, '0'), barn: () => '#a8322a', silo: () => '#b9c2cc',
   cabin: () => '#3a2a1e', shack: () => '#c99a6a', watertower: () => '#9aa4ad', lodge: () => '#2b2b30',
-  hut: (p) => '#' + HUT_COLORS[p.variant].toString(16).padStart(6, '0'), lifeguard: () => '#d83a2e', gas: () => '#e8e8ea',
+  hut: (p) => '#' + HUT_COLORS[p.variant].toString(16).padStart(6, '0'), lifeguard: () => '#d83a2e', gas: () => '#e8e8ea', hq: () => '#ff7a3d',
 };
 
 export class PropKit {
@@ -26,6 +26,7 @@ export class PropKit {
       adobeTop: mat(0xb3875a), metal: mat(0x9aa4ad, { metalness: 0.5, roughness: 0.45 }), concrete: mat(0xb9c2cc),
       pole: mat(0x6a5038), straw: mat(0xd9b65c), rock: mat(0x8a8d92, { flatShading: true }), redRock: mat(0xa8664a, { flatShading: true }),
       post: mat(0x8a8f99, { metalness: 0.5, roughness: 0.4 }), canopy: mat(0xf2f2f2), signGreen: mat(0x0f6b3a), panelBack: mat(0x2a2d33),
+      apron: mat(0x6a6e76), orange: mat(0xff5a1f),
     };
     const g = (geo) => shared(geo);
     this.g = {
@@ -198,6 +199,34 @@ export class PropKit {
     const sign = new THREE.Mesh(this.g.box, [M.red, M.red, M.red, M.red, this._adMat('FUEL', '#c8102e', '#fff'), this._adMat('FUEL', '#c8102e', '#fff')]);
     sign.scale.set(2.4, 1.8, 0.3); sign.position.set(12.5, 7.6, -8); sign.rotation.y = Math.PI / 2;
     o.add(sign);
+    return o;
+  }
+
+  /** Festival HQ: the garage. Roller doors and a sign face the road; the forecourt runs to the kerb. */
+  hq(p) {
+    const o = new THREE.Group(), M = this.m;
+    const W = p.w, D = p.d, H = p.h;
+    // forecourt: concrete from the building to the road edge (local +x is toward the road)
+    this._box(o, M.apron, 19, 0.3, D - 2, W / 2 + 9.5, -0.25, 0);
+    for (const z of [-D / 2 + 3, D / 2 - 3]) this._box(o, M.white, 17, 0.32, 0.25, W / 2 + 9.5, -0.25, z);   // painted bay lines
+    this._box(o, M.concrete, W + 1, 0.6, D + 1, 0, -0.3, 0);
+    this._box(o, M.walls[1], W, H, D, 0, 0.3, 0);
+    this._box(o, M.glass, W + 0.1, 1.6, D + 0.1, 0, H - 2.2, 0);
+    this._box(o, M.slate, W + 0.6, 0.5, D + 0.6, 0, H + 0.3, 0);
+    // two bays: one roller door down, one open with the workshop lit inside
+    for (const [z, open] of [[-8, true], [8, false]]) {
+      this._box(o, M.orange, 0.3, 6, 8.4, W / 2 + 0.1, 0.3, z);
+      this._box(o, open ? M.door : M.metal, 0.35, 5.2, 7, W / 2 + 0.2, 0.3, z);
+      if (!open) for (let k = 1; k < 9; k++) this._box(o, M.slate, 0.4, 0.06, 7, W / 2 + 0.22, 0.3 + k * 0.58, z);
+    }
+    const sign = new THREE.Mesh(this.g.box, [this._adMat('FESTIVAL HQ · GARAGE', '#ff5a1f', '#fff'), M.orange, M.orange, M.orange, M.orange, M.orange]);
+    sign.scale.set(0.4, 2.4, 20); sign.position.set(W / 2 + 0.3, 7.6, 0);
+    o.add(sign);
+    // flags at the forecourt corners
+    for (const z of [-D / 2 + 1, D / 2 - 1]) {
+      this._box(o, M.post, 0.15, 9, 0.15, W / 2 + 18, 0, z);
+      this._box(o, M.orange, 0.08, 1.6, 2.4, W / 2 + 18, 7, z + (z < 0 ? 1.25 : -1.25));
+    }
     return o;
   }
 

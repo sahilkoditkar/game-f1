@@ -176,6 +176,18 @@ export const EVENTS = [
   { id: 'forestrally', road: 'trail', t: 0.1, side: -1, laps: 1, ai: 5 },
 ];
 
+/**
+ * Championships live in the world: each series (data.js SERIES) has a venue on a road.
+ * `at` is where to look; the venue moves along the road to a quiet stretch (clear of
+ * junctions and other markers).
+ */
+export const CHAMPIONSHIPS = [
+  { series: 'rookie', road: 'farm2', at: [-1000, 1550] },
+  { series: 'pro', road: 'canyon', at: [2700, -760] },
+  { series: 'gp', road: 'coast', at: [-2700, 1250] },
+  { series: 'legends', road: 'mesa', at: [1500, -2050] },
+];
+
 /** Prize money by finishing position for an event, scaled by the field size. */
 export const EVENT_PRIZE = [6000, 4200, 3000, 2200, 1600, 1200, 900, 700, 500, 400, 300, 200];
 
