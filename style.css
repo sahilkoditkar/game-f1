@@ -176,7 +176,17 @@ button.roam { border-color: rgba(255,210,63,.35); }
 .hz-level b { font-size: 22px; color: var(--accent-2); }
 .hz-xpbar { height: 6px; width: 160px; background: rgba(0,0,0,.4); border-radius: 3px; overflow: hidden; margin: 6px 0 6px auto; }
 .hz-xpbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .3s; }
-.hz-money { color: var(--good); font-weight: 800; font-size: 15px; }
+.hz-wallet { position: relative; display: inline-flex; align-items: baseline; gap: 6px; background: rgba(0,0,0,.35); border-radius: 8px; padding: 3px 9px; }
+.hz-wallet span { font-size: 10px; letter-spacing: .2em; color: rgba(255,255,255,.7); font-weight: 700; }
+.hz-money { color: var(--good); font-weight: 800; font-size: 17px; }
+.hz-gain { position: absolute; right: 4px; top: 100%; margin-top: 2px; font-style: normal; font-weight: 800; font-size: 14px; color: var(--good); opacity: 0; white-space: nowrap; }
+.hz-gain.pop { animation: gainpop 1.8s ease-out; }
+@keyframes gainpop { 0% { opacity: 0; transform: translateY(-4px); } 12% { opacity: 1; transform: translateY(0); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(8px); } }
+.hz-guide { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); width: min(560px, calc(100% - 32px)); display: flex; gap: 12px; align-items: center; background: rgba(10,12,18,.82); border: 1px solid rgba(255,122,61,.55); border-left: 4px solid var(--accent); border-radius: 12px; padding: 10px 14px; pointer-events: auto; animation: fadein .3s; text-shadow: none; }
+.hz-guide > div { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: rgba(255,255,255,.85); }
+.hz-guide b { font-size: 15px; color: #fff; }
+.hz-guide button { flex: none; font-size: 11px; padding: 5px 9px; }
+.hz-guide.hidden { display: none; }
 .hz-radar { position: absolute; bottom: 20px; left: 20px; width: 280px; height: 190px; filter: drop-shadow(0 6px 16px rgba(0,0,0,.45)); }
 .hz-waypoint { position: absolute; bottom: 222px; left: 20px; min-width: 240px; max-width: 340px; background: rgba(10,12,18,.74); border-left: 4px solid #c45bff; border-radius: 10px; padding: 8px 12px; display: flex; gap: 10px; align-items: center; text-shadow: 0 1px 4px rgba(0,0,0,.6); }
 .hz-waypoint .turn { flex: none; width: 30px; font-size: 30px; font-weight: 900; line-height: 1; text-align: center; color: #e3b6ff; }
@@ -189,12 +199,12 @@ button.roam { border-color: rgba(255,210,63,.35); }
 .hz-live { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); text-align: center; text-shadow: 0 2px 10px rgba(0,0,0,.7); }
 .hz-live .label { font-size: 12px; letter-spacing: .3em; color: var(--accent-2); font-weight: 800; }
 .hz-live .score { font-size: 44px; font-weight: 900; font-style: italic; font-variant-numeric: tabular-nums; }
-.hz-toasts { position: absolute; right: 16px; top: 140px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.hz-toasts { position: absolute; right: 16px; top: 166px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .hz-toast { background: rgba(0,0,0,.5); border-radius: 8px; padding: 6px 10px; font-size: 14px; font-weight: 700; animation: fadein .25s; transition: opacity .5s; }
 .hz-toast.out { opacity: 0; }
 .hz-hint { position: absolute; bottom: 14px; right: 20px; font-size: 11px; color: rgba(255,255,255,.55); }
 .hz-prompt { pointer-events: auto; cursor: pointer; }
-.hz-mapbtn { position: absolute; top: 96px; right: 16px; pointer-events: auto; padding: 6px 12px; font-size: 12px; letter-spacing: .15em; border-radius: 8px; background: rgba(0,0,0,.45); }
+.hz-mapbtn { position: absolute; top: 124px; right: 16px; pointer-events: auto; padding: 6px 12px; font-size: 12px; letter-spacing: .15em; border-radius: 8px; background: rgba(0,0,0,.45); }
 #touch-controls:not(.hidden) ~ #hud-layer .hz-hint { display: none; }
 .hz-hint kbd { font-size: 10px; padding: 1px 5px; }
 .hud .hz-br { bottom: 48px; }
@@ -253,3 +263,16 @@ button.roam { border-color: rgba(255,210,63,.35); }
   .hzmap-scale { display: none; }
 }
 .hz-stats b span { font-weight: 400; color: var(--muted); }
+
+/* ---------- One wallet (main menu, Play screen) ---------- */
+.wallet-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 16px 0; }
+.wallet-bar > div { background: rgba(255,255,255,.05); border: 1px solid var(--panel-border); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.wallet-bar span { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); }
+.wallet-bar b { font-size: 18px; font-weight: 800; }
+.wallet-bar small { font-size: 12px; color: var(--muted); font-weight: 500; }
+.menu-label { margin: 8px 2px -2px; font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.menu-label span { letter-spacing: 0; text-transform: none; font-weight: 400; }
+.eyebrow { letter-spacing: .2em; text-transform: uppercase; font-size: 11px; }
+.round-row { padding: 4px 0; border-bottom: 1px solid var(--panel-border); }
+@media (max-width: 520px) { .wallet-bar { grid-template-columns: repeat(2, 1fr); } }
+.hz-xptext { font-size: 11px; color: rgba(255,255,255,.75); margin: -2px 0 6px; font-variant-numeric: tabular-nums; }

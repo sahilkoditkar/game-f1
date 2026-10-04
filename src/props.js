@@ -2,6 +2,7 @@
 // and materials are shared across chunks (userData.shared keeps them alive when a
 // chunk is dropped); repeated small things are drawn as instanced meshes.
 import * as THREE from 'three';
+import { buildCarMesh } from './carmodels.js';
 
 const HOUSE_WALLS = [0xe8dcc4, 0xf2f0ea, 0xe9d49a, 0xb9cfe0, 0xe2a58c, 0xb8c9a3];
 const HOUSE_ROOFS = [0x8b3a2e, 0x5a4a42, 0x3f4f5f, 0x7a2f2f, 0x4d5a3a, 0x6b5b4b];
@@ -11,7 +12,7 @@ const HUT_COLORS = [0xff6f61, 0x4ecdc4, 0xffd93d, 0x6c5ce7, 0xff9ff3, 0x48dbfb];
 export const PROP_MAP_COLORS = {
   house: (p) => '#' + HOUSE_ROOFS[p.variant].toString(16).padStart(6, '0'), barn: () => '#a8322a', silo: () => '#b9c2cc',
   cabin: () => '#3a2a1e', shack: () => '#c99a6a', watertower: () => '#9aa4ad', lodge: () => '#2b2b30',
-  hut: (p) => '#' + HUT_COLORS[p.variant].toString(16).padStart(6, '0'), lifeguard: () => '#d83a2e', gas: () => '#e8e8ea',
+  hut: (p) => '#' + HUT_COLORS[p.variant].toString(16).padStart(6, '0'), lifeguard: () => '#d83a2e', gas: () => '#e8e8ea', hq: () => '#ff7a3d', dealer: () => '#7dd3fc', tuning: () => '#f97316',
 };
 
 export class PropKit {
@@ -26,6 +27,9 @@ export class PropKit {
       adobeTop: mat(0xb3875a), metal: mat(0x9aa4ad, { metalness: 0.5, roughness: 0.45 }), concrete: mat(0xb9c2cc),
       pole: mat(0x6a5038), straw: mat(0xd9b65c), rock: mat(0x8a8d92, { flatShading: true }), redRock: mat(0xa8664a, { flatShading: true }),
       post: mat(0x8a8f99, { metalness: 0.5, roughness: 0.4 }), canopy: mat(0xf2f2f2), signGreen: mat(0x0f6b3a), panelBack: mat(0x2a2d33),
+      apron: mat(0x6a6e76), orange: mat(0xff5a1f), tyre: mat(0x1c1c20, { roughness: 0.95 }), floor: mat(0xd9dbe0, { roughness: 0.3 }),
+      showGlass: mat(0x9fd8f5, { transparent: true, opacity: 0.28, roughness: 0.05, metalness: 0.3, side: THREE.DoubleSide, depthWrite: false }),
+      sky: mat(0x38bdf8), steel: mat(0xa9b0b8, { metalness: 0.55, roughness: 0.4 }),
     };
     const g = (geo) => shared(geo);
     this.g = {
@@ -61,6 +65,8 @@ export class PropKit {
       holder.add(o);
     }
     mergeByMaterial(group, holder, this.highQ);
+    // real car models in the dealership's windows (not merged: each has its own materials)
+    for (const p of props) if (p.kind === 'dealer') this._showroomCars(group, p);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
     const instanced = (list, geo, material, scaleFn = () => sc.set(1, 1, 1), yaw = (p) => p.rot) => {
       if (!list.length) return;
@@ -198,6 +204,95 @@ export class PropKit {
     const sign = new THREE.Mesh(this.g.box, [M.red, M.red, M.red, M.red, this._adMat('FUEL', '#c8102e', '#fff'), this._adMat('FUEL', '#c8102e', '#fff')]);
     sign.scale.set(2.4, 1.8, 0.3); sign.position.set(12.5, 7.6, -8); sign.rotation.y = Math.PI / 2;
     o.add(sign);
+    return o;
+  }
+
+  /** Festival HQ: the garage. Roller doors and a sign face the road; the forecourt runs to the kerb. */
+  hq(p) {
+    const o = new THREE.Group(), M = this.m;
+    const W = p.w, D = p.d, H = p.h;
+    this._forecourt(o, p);
+    this._box(o, M.concrete, W + 1, 0.6, D + 1, 0, -0.3, 0);
+    this._box(o, M.walls[1], W, H, D, 0, 0.3, 0);
+    this._box(o, M.glass, W + 0.1, 1.6, D + 0.1, 0, H - 2.2, 0);
+    this._box(o, M.slate, W + 0.6, 0.5, D + 0.6, 0, H + 0.3, 0);
+    // two bays: one roller door down, one open with the workshop lit inside
+    for (const [z, open] of [[-8, true], [8, false]]) {
+      this._box(o, M.orange, 0.3, 6, 8.4, W / 2 + 0.1, 0.3, z);
+      this._box(o, open ? M.door : M.metal, 0.35, 5.2, 7, W / 2 + 0.2, 0.3, z);
+      if (!open) for (let k = 1; k < 9; k++) this._box(o, M.slate, 0.4, 0.06, 7, W / 2 + 0.22, 0.3 + k * 0.58, z);
+    }
+    const sign = new THREE.Mesh(this.g.box, [this._adMat('FESTIVAL HQ · GARAGE', '#ff5a1f', '#fff'), M.orange, M.orange, M.orange, M.orange, M.orange]);
+    sign.scale.set(0.4, 2.4, 20); sign.position.set(W / 2 + 0.3, 7.6, 0);
+    o.add(sign);
+    // flags at the forecourt corners
+    for (const z of [-D / 2 + 1, D / 2 - 1]) {
+      this._box(o, M.post, 0.15, 9, 0.15, W / 2 + 18, 0, z);
+      this._box(o, M.orange, 0.08, 1.6, 2.4, W / 2 + 18, 7, z + (z < 0 ? 1.25 : -1.25));
+    }
+    return o;
+  }
+
+  /** Concrete from the building's front to the road edge (local +x is toward the road), with bay lines. */
+  _forecourt(o, p) {
+    const len = (p.reach || p.w / 2 + 19) - p.w / 2 - 0.5, mid = p.w / 2 + len / 2;
+    this._box(o, this.m.apron, len, 0.3, p.d - 2, mid, -0.25, 0);
+    for (const z of [-p.d / 2 + 3, p.d / 2 - 3]) this._box(o, this.m.white, len - 2, 0.32, 0.25, mid, -0.25, z);
+  }
+
+  /** Apex Motors: a glass showroom with three cars on turntables. */
+  dealer(p) {
+    const o = new THREE.Group(), M = this.m;
+    const W = p.w, D = p.d, H = p.h;
+    this._forecourt(o, p);
+    this._box(o, M.concrete, W + 1, 0.6, D + 1, 0, -0.3, 0);
+    this._box(o, M.floor, W, 0.1, D, 0, 0.3, 0);
+    // glass walls on a slim frame; a solid back wall
+    this._box(o, M.showGlass, 0.12, H - 1, D, W / 2, 0.4, 0);
+    for (const z of [-D / 2, D / 2]) this._box(o, M.showGlass, W, H - 1, 0.12, 0, 0.4, z);
+    this._box(o, M.walls[1], 0.4, H, D, -W / 2, 0.3, 0);
+    for (const z of [-D / 2, -D / 6, D / 6, D / 2]) this._box(o, M.post, 0.35, H - 0.6, 0.35, W / 2, 0.3, z);
+    for (const x of [W / 2, -W / 2 + 0.2]) for (const z of [-D / 2, D / 2]) this._box(o, M.post, 0.35, H - 0.6, 0.35, x, 0.3, z);
+    this._box(o, M.white, W + 1.4, 0.7, D + 1.4, 0, H - 0.3, 0);
+    // turntables under the display cars
+    for (const z of [-11, 0, 11]) this._cyl(o, M.slate, 3.1, 0.12, 0, 0.4, z);
+    const sign = new THREE.Mesh(this.g.box, [this._adMat(p.name.toUpperCase(), '#0b3a5a', '#7dd3fc'), M.sky, M.sky, M.sky, M.sky, M.sky]);
+    sign.scale.set(0.4, 2, 16); sign.position.set(W / 2 + 0.5, H + 1.3, 0);
+    o.add(sign);
+    return o;
+  }
+
+  _showroomCars(group, p) {
+    const cs = Math.cos(p.rot), sn = Math.sin(p.rot);
+    [['super', 0xff2d55, -11, 0.6], ['hyper', 0x38bdf8, 0, -0.5], ['muscle', 0xffd23f, 11, 0.8]].forEach(([shape, color, lz, yaw]) => {
+      const car = buildCarMesh(shape, color, this.highQ ? 'high' : 'low');
+      // the model's geometry belongs to a shared template: never free it with the chunk
+      car.traverse(m => { if (m.geometry) m.geometry.userData.shared = true; if (m.material) for (const mm of [].concat(m.material)) mm.userData.shared = true; });
+      car.position.set(p.x + lz * sn, p.y + 0.42, p.z + lz * cs);
+      car.rotation.y = p.rot + Math.PI / 2 + yaw;
+      group.add(car);
+    });
+  }
+
+  /** A tuning workshop: a steel shed with two open bays, tyre stacks and a sign. */
+  tuning(p) {
+    const o = new THREE.Group(), M = this.m;
+    const W = p.w, D = p.d, H = p.h;
+    this._forecourt(o, p);
+    this._box(o, M.concrete, W + 1, 0.6, D + 1, 0, -0.3, 0);
+    this._box(o, M.steel, W, H, D, 0, 0.3, 0);
+    this._roof(o, M.slate, W * 1.08, 1.6, D * 1.05, H + 0.3);
+    for (const z of [-D / 4, D / 4]) {
+      this._box(o, M.orange, 0.3, 5, 7.6, W / 2 + 0.1, 0.3, z);
+      this._box(o, M.door, 0.35, 4.4, 6.4, W / 2 + 0.2, 0.3, z);
+    }
+    const sign = new THREE.Mesh(this.g.box, [this._adMat(p.name.toUpperCase(), '#1c1c20', '#f97316'), M.orange, M.orange, M.orange, M.orange, M.orange]);
+    sign.scale.set(0.35, 1.6, 15); sign.position.set(W / 2 + 0.3, H - 0.6, 0);
+    o.add(sign);
+    // stacks of tyres by the doors
+    for (const [x, z] of [[W / 2 + 2, -D / 2 + 1.5], [W / 2 + 2, D / 2 - 1.5], [W / 2 + 3.6, D / 2 - 1.5]]) {
+      for (let k = 0; k < 4; k++) this._cyl(o, M.tyre, 0.45, 0.3, x, 0.3 + k * 0.31, z);
+    }
     return o;
   }
 

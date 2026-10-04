@@ -118,7 +118,9 @@ class App {
       let pauseKey = this.input.justPressed('Escape') || this.input.touch.pause;
       for (const pd of connectedPads()) if (this.input.read('none', pd.index, -1).pause) pauseKey = true;
       if (pauseKey && !(this.race && this.race.state === 'finished')) {
-        if (this.ui.mapOpen) this.closeMap(); else this.togglePause();
+        if (this.ui.mapOpen) this.closeMap();
+        else if (this.ui.worldPanelClose) this.ui.worldPanelClose();   // garage / championship screen over the world
+        else this.togglePause();
       }
       if (this.race) {
         if (!this.paused) this.race.update(dt);
@@ -164,7 +166,61 @@ class App {
     this.startRace({ track, laps, players, ai, mode, ghost, dynamic, quality: this.profile.settings.quality }, { mode, trackName: track.name, laps, trackId: track.id, carId: st.players[0].carId, hasGhost: !!ghost, dynamic, stage: !!track.open });
   }
 
-  startCareerRace(seriesId) {
+  /** Enter pressed at a marker in the world: race an event, open a championship or the garage. */
+  onWorldMarker(marker) {
+    if (marker.kind === 'event') this.startHorizonEvent(marker);
+    else if (marker.kind === 'garage') this.openGarage(marker);
+    else if (marker.kind === 'series') this.openSeries(marker);
+  }
+
+  /** Pause the world under a full-screen panel; `show(close)` draws it and must call close() to leave. */
+  _worldPanel(show, after = () => {}) {
+    const hz = this.horizon;
+    if (!hz || this.race) return;
+    this.paused = true;
+    hz.setPaused(true);
+    const close = () => {
+      this.ui.worldPanelClose = null;
+      this.ui.hide();
+      this.paused = false;
+      hz.setPaused(false);
+      hz.promptCooldown = 1.5;
+      after();
+    };
+    this.ui.worldPanelClose = close;
+    show(close);
+  }
+
+  /** A garage in the world: Festival HQ (everything), the dealership (buy) or a tuning shop (upgrades). */
+  openGarage(marker = this.horizon && this.horizon.world.garages[0]) {
+    const hz = this.horizon;
+    this._worldPanel((close) => this.ui.garage({ inWorld: true, mode: marker.type, name: marker.name, onClose: close }), () => { hz.swapCar(); hz.onGarageClosed(); });
+  }
+
+  openSeries(marker) {
+    this._worldPanel((close) => this.ui.seriesPanel(marker.series, { onClose: close, onRace: () => { this.ui.worldPanelClose = null; this.horizon.paused = false; this.startWorldSeriesRace(marker); } }));
+  }
+
+  /** Pause menu → "Go to garage": fast travel to Festival HQ and open it. */
+  goToGarage() {
+    const hz = this.horizon;
+    if (!hz) return;
+    this.paused = false;
+    hz.setPaused(false);
+    this.ui.hide();
+    hz.teleportTo(hz.world.garages[0]);
+    this.openGarage(hz.world.garages[0]);
+  }
+
+  /** A championship round raced from its venue; the results screen returns to the world. */
+  startWorldSeriesRace(marker) {
+    const hz = this.horizon;
+    hz.saveState();
+    hz.suspend();
+    this.startCareerRace(marker.series, marker);
+  }
+
+  startCareerRace(seriesId, marker = null) {
     const series = getSeries(seriesId);
     const st = seriesState(this.profile, seriesId);
     const ev = series.events[st.event];
@@ -174,7 +230,7 @@ class App {
     const players = [this._playerEntry({ name: this.profile.name, colorIndex: this.profile.colorIndex || 0, control: this.profile.settings.p1Control }, 0, playerStats(this.profile), car.shape)];
     const ai = seriesField(series);
     this.startRace({ track, laps: ev.laps, players, ai, mode: 'career', quality: this.profile.settings.quality },
-      { mode: 'career', seriesId, trackName: track.name, laps: ev.laps, trackId: track.id, carId: car.id });
+      { mode: 'career', seriesId, trackName: track.name, laps: ev.laps, trackId: track.id, carId: car.id, marker });
   }
 
   // ------------------------------------------------------------ Free Roam
@@ -185,7 +241,7 @@ class App {
     this.audio.init();
     this.horizon = new Horizon({
       renderer: this.renderer, input: this.input, audio: this.audio, profile: this.profile, quality: this.profile.settings.quality,
-      onEvent: (marker) => this.startHorizonEvent(marker),
+      onEvent: (marker) => this.onWorldMarker(marker),
       onSave: () => this.save(),
       onLevel: () => this._refreshIdleCars(),
     });
@@ -221,6 +277,7 @@ class App {
     this.disposeHorizon();
     this.paused = false;
     this.ui.mapOpen = false;
+    this.ui.worldPanelClose = null;
     this.ui.mainMenu();
   }
 
@@ -305,7 +362,7 @@ class App {
     if (ctx.mode === 'career') {
       // Career events can't be replayed once scored; only allow restart mid-race.
       if (this.race && this.race.state !== 'finished') { this.startRace(config, ctx); return; }
-      return this.ui.career();
+      return this.horizon ? this.returnToHorizon() : this.ui.mainMenu();
     }
     this.startRace(config, ctx);
   }
@@ -319,10 +376,11 @@ class App {
 
   /** Leave a finished race and show a menu screen ('menu' | 'career'). */
   leaveRace(where = 'menu') {
-    if (where === 'horizon') return this.returnToHorizon();
+    // championships are raced from the world, so they go back to it
+    if (where === 'horizon' || (where === 'career' && this.horizon)) return this.returnToHorizon();
     this.disposeRace();
     this.paused = false;
-    if (where === 'career') this.ui.career(); else this.ui.mainMenu();
+    this.ui.mainMenu();
   }
 
   disposeRace() {

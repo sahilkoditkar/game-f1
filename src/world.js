@@ -6,9 +6,10 @@ import * as THREE from 'three';
 import { sampleSpline } from './track.js';
 import { THEMES } from './tracks.js';
 import {
-  ROADS, REGIONS, EVENTS, TRAPS, DRIFTS, SPEEDZONES, BOARD_COUNT, WORLD_HALF, SEA_LEVEL, CITY, COAST,
+  ROADS, REGIONS, EVENTS, TRAPS, DRIFTS, SPEEDZONES, BOARD_COUNT, WORLD_HALF, SEA_LEVEL, CITY, COAST, CHAMPIONSHIPS, GARAGES,
 } from './worlddef.js';
 import { getTrack } from './tracks.js';
+import { getSeries } from './data.js';
 
 const SPACING = 2;
 
@@ -159,15 +160,29 @@ export class World {
   terrainHeight(x, z) {
     const base = this.baseHeight(x, z);
     const near = this.nearestGlobal(x, z, 2);
-    if (near.idx < 0) return base;
+    if (near.idx < 0) return this._onPads(x, z, base);
     const s = this.samples[near.idx];
     // flat out to 8 m past the edge: the terrain mesh is a 10 m grid, so a hillside
     // vertex any closer would slope up through the asphalt between grid points
     const edge = s.hw + 8;
     const ry = s.yl === undefined ? s.p.y : this.surfaceAt(s, (x - s.p.x) * s.n.x + (z - s.p.z) * s.n.z);
-    if (near.dist <= edge) return ry - 0.12;
-    const k = smoothstep(edge, edge + 45, near.dist);
-    return (ry - 0.12) * (1 - k) + base * k;
+    let h;
+    if (near.dist <= edge) h = ry - 0.12;
+    else { const k = smoothstep(edge, edge + 45, near.dist); h = (ry - 0.12) * (1 - k) + base * k; }
+    h = this._onPads(x, z, h);
+    // a levelled pad beside a road must never lift the ground over the road or its verge
+    if (near.dist <= s.hw + 4) h = Math.min(h, ry - 0.12);
+    return h;
+  }
+
+  /** Level ground under buildings with a forecourt (Festival HQ): flat inside, blended out over 30 m. */
+  _onPads(x, z, h) {
+    for (const p of this.pads || []) {
+      const d = Math.hypot(x - p.x, z - p.z);
+      if (d < p.r) return p.y - 0.02;
+      if (d < p.r + 30) { const k = smoothstep(p.r, p.r + 30, d); h = (p.y - 0.02) * (1 - k) + h * k; }
+    }
+    return h;
   }
 
   // ------------------------------------------------------------ Roads
@@ -710,6 +725,98 @@ export class World {
   /** Is `idx` inside the sample range [i0, i1] of its road (ranges never wrap). */
   inRange(idx, i0, i1) { return idx >= i0 && idx <= i1; }
 
+  // ------------------------------------------------------------ Garages & championship venues
+  /**
+   * The garages (GARAGES). Festival HQ sits just past the festival start on the outside
+   * of the ring; the others go to a quiet stretch of their road with clear ground for
+   * the building on one side. Each marker sits on the forecourt in front of the door
+   * (drive onto it and press Enter); `idx` is the road sample beside it (fast travel
+   * puts you there). The forecourt and building stand on a levelled pad.
+   */
+  _placeGarages() {
+    // metres from the road edge: forecourt pad marker, building centre, levelled pad centre and radius
+    const LAYOUT = { hq: { fore: 10, bld: 30, pad: 18, r: 26 }, dealer: { fore: 9, bld: 24, pad: 15, r: 22 }, tuning: { fore: 8, bld: 20, pad: 13, r: 19 } };
+    const SIZE = { hq: 22, dealer: 24, tuning: 18 };    // building depth away from the road
+    this.pads = [];
+    this.garages = [];
+    const jpts = this.junctionPairs.map(([a]) => this.samples[a].p);
+    const taken = [this.hub, ...this.events, ...this.traps, ...[...this.drifts, ...this.zones].flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p])];
+    const make = (def, idx, side) => {
+      const L = LAYOUT[def.type], s = this.samples[idx];
+      const at = (off) => ({ x: s.p.x + s.n.x * side * (s.hw + off), z: s.p.z + s.n.z * side * (s.hw + off) });
+      const fore = at(L.fore), bld = at(L.bld), pad = at(L.pad);
+      const rot = s.heading + (side > 0 ? Math.PI : 0);           // the building's +x (door side) faces the road
+      this.pads.push({ x: pad.x, z: pad.z, r: L.r, y: s.p.y });
+      const g = { id: def.id, kind: 'garage', type: def.type, name: def.name, idx, x: fore.x, z: fore.z, y: s.p.y, rot, building: { x: bld.x, z: bld.z, rot, reach: L.bld } };
+      this.garages.push(g);
+      taken.push(g, bld);
+      return g;
+    };
+    /** Room for the building on this side: no other road, city block, sea or marker nearby. */
+    const roomFor = (def, idx, side) => {
+      const L = LAYOUT[def.type], s = this.samples[idx];
+      const far = L.bld + SIZE[def.type] / 2 + 6;
+      for (let off = 2; off <= far; off += 4) for (const along of [-18, 0, 18]) {
+        const x = s.p.x + s.n.x * side * (s.hw + off) + s.t.x * along, z = s.p.z + s.n.z * side * (s.hw + off) + s.t.z * along;
+        if (coastDist(x, z) < 50) return false;
+        const near = this.nearestGlobal(x, z, 2);
+        if (near.idx >= 0 && this.samples[near.idx].road !== s.road && near.dist < this.samples[near.idx].hw + 10) return false;
+        if (this.buildings.some(b => Math.hypot(b.x - x, b.z - z) < b.r + 8)) return false;
+      }
+      const c = { x: s.p.x + s.n.x * side * (s.hw + L.bld), z: s.p.z + s.n.z * side * (s.hw + L.bld) };
+      return taken.every(q => Math.hypot(q.x - c.x, q.z - c.z) > 120);
+    };
+    // a flat stretch (under 2% for 40 m either way), so the forecourt meets the road all along
+    const flat = (road, i) => { for (let k = -20; k <= 20; k++) { const q = this.roadWrap(road, i + k); if (q < 0 || Math.abs(this.samples[q].slope) > 0.02) return false; } return true; };
+    for (const def of GARAGES) {
+      if (def.type === 'hq') {
+        const ring = this.getRoad('ring');
+        const want = this.hub.idx + 75;
+        let idx = this.roadWrap(ring, want, true);
+        for (let k = 0; k < 60; k++) { const q = this.roadWrap(ring, want + k, true); if (flat(ring, q)) { idx = q; break; } }
+        const s = this.samples[idx];
+        make(def, idx, Math.sign(s.n.x * s.p.x + s.n.z * s.p.z) || 1);   // away from the island's centre
+        continue;
+      }
+      const road = this.getRoad(def.road);
+      const start = this.indexNear(def.road, def.at[0], def.at[1]);
+      const quiet = (i) => !this.samples[i].jz && flat(road, i) && jpts.every(q => Math.hypot(q.x - this.samples[i].p.x, q.z - this.samples[i].p.z) > 70);
+      let placed = false;
+      for (let k = 0; k < road.n && !placed; k += 2) {
+        for (const i of [this.roadWrap(road, start + k), this.roadWrap(road, start - k)]) {
+          if (i < 0 || !quiet(i)) continue;
+          const side = [1, -1].find(sd => roomFor(def, i, sd));
+          if (side) { make(def, i, side); placed = true; break; }
+        }
+      }
+    }
+  }
+
+  /** A venue per championship on a quiet stretch of its road, with a gantry across it like an event. */
+  _placeChampionships(roadside) {
+    const taken = [this.hub, ...this.garages, ...this.events, ...this.traps,
+      ...[...this.drifts, ...this.zones].flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p])];
+    const jpts = this.junctionPairs.map(([a]) => this.samples[a].p);
+    this.championships = CHAMPIONSHIPS.map(c => {
+      const road = this.getRoad(c.road);
+      const start = this.indexNear(c.road, c.at[0], c.at[1]);
+      const ok = (i) => {
+        const p = this.samples[i].p;
+        return !this.samples[i].jz && jpts.every(q => Math.hypot(q.x - p.x, q.z - p.z) > 110) && taken.every(q => Math.hypot(q.x - p.x, q.z - p.z) > 160);
+      };
+      let idx = start;
+      for (let k = 0; k < road.n; k++) {
+        const a = this.roadWrap(road, start + k), b = this.roadWrap(road, start - k);
+        if (a >= 0 && ok(a)) { idx = a; break; }
+        if (b >= 0 && ok(b)) { idx = b; break; }
+      }
+      const series = getSeries(c.series);
+      const m = { id: `champ-${c.series}`, kind: 'series', series: c.series, name: series.name, idx, ...roadside(idx, 1, 6), heading: this.samples[idx].heading };
+      taken.push(m);
+      return m;
+    });
+  }
+
   // ------------------------------------------------------------ Route finding (GPS)
   /**
    * Road graph for the GPS: a node at every junction and open road end, an edge for
@@ -885,6 +992,8 @@ export class World {
     };
     this.drifts = DRIFTS.map(z => ({ ...span(z), kind: 'drift', name: 'Drift Zone' }));
     this.zones = SPEEDZONES.map(z => ({ ...span(z), kind: 'zone', name: 'Speed Zone' }));
+    this._placeGarages();
+    this._placeChampionships(roadside);
     // Bonus boards: deterministic positions beside roads, never in the sea or on a road.
     const rand = mulberry32(90210);
     this.boards = [];
@@ -902,7 +1011,7 @@ export class World {
       if (this.boards.some(b => Math.hypot(b.x - x, b.z - z) < 250)) continue;
       this.boards.push({ id: `board-${this.boards.length}`, kind: 'board', name: 'Bonus Board', x, z, y: this.terrainHeight(x, z), heading: s.heading + Math.PI / 2 * side, idx });
     }
-    this.markers = [this.hub, ...this.events, ...this.traps, ...this.drifts, ...this.zones];
+    this.markers = [this.hub, ...this.garages, ...this.championships, ...this.events, ...this.traps, ...this.drifts, ...this.zones];
   }
 }
 
@@ -925,6 +1034,9 @@ const KINDS = {
   hut: { w: [3.6, 4.4], d: [3.6, 4.4], h: [2.6, 3], solid: true, map: true },
   lifeguard: { w: [3.2, 3.2], d: [3.2, 3.2], h: [5, 5], solid: true, map: true },
   gas: { w: [28, 28], d: [18, 18], h: [5.5, 5.5], solid: false, map: true },
+  hq: { w: [22, 22], d: [36, 36], h: [9, 9], solid: true, map: true },
+  dealer: { w: [24, 24], d: [34, 34], h: [8, 8], solid: true, map: true },
+  tuning: { w: [18, 18], d: [24, 24], h: [7, 7], solid: true, map: true },
   billboard: { w: [2, 2], d: [11, 11], h: [9, 9], solid: false },
   sign: { w: [1, 1], d: [5.4, 5.4], h: [4.6, 4.6], solid: false },
   pole: { w: [0.5, 0.5], d: [0.5, 0.5], h: [9, 9], solid: true },
@@ -946,7 +1058,8 @@ Object.assign(World.prototype, {
     this.props = [];
     const grid = new Map();
     const cellOf = (x, z) => `${Math.floor(x / 30)},${Math.floor(z / 30)}`;
-    const avoid = [this.hub, ...this.events, ...this.traps, ...this.boards,
+    const avoid = [this.hub, ...this.events, ...this.traps, ...this.boards, ...this.championships,
+      ...this.garages.flatMap(g => [{ x: g.x, z: g.z, avoidR: 12 }, { x: g.building.x, z: g.building.z, avoidR: 22 }]),
       ...this.drifts.flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p]), ...this.zones.flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p])];
     const cityPad = 90;
     const free = (x, z, r, roadGap, coastGap = 35) => {
@@ -954,7 +1067,7 @@ Object.assign(World.prototype, {
       if (x > CITY.x0 - cityPad && x < CITY.x1 + cityPad && z > CITY.z0 - cityPad && z < CITY.z1 + cityPad) return false;
       const near = this.nearestGlobal(x, z, 2);
       if (near.idx >= 0 && near.dist - this.samples[near.idx].hw < r + roadGap) return false;
-      for (const a of avoid) if (Math.hypot(a.x - x, a.z - z) < r + 26) return false;
+      for (const a of avoid) if (Math.hypot(a.x - x, a.z - z) < r + 26 + (a.avoidR || 0)) return false;
       const cx = Math.floor(x / 30), cz = Math.floor(z / 30);
       for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
         for (const p of grid.get(`${cx + dx},${cz + dz}`) || []) if (Math.hypot(p.x - x, p.z - z) < p.r + r + 1.5) return false;
@@ -987,6 +1100,9 @@ Object.assign(World.prototype, {
       for (let i = 0; i < this.count; i += 6) { const p = this.samples[i].p; if (Math.abs(p.x - x) < rad && Math.abs(p.z - z) < rad && Math.hypot(p.x - x, p.z - z) < rad) out.push(i); }
       return out;
     };
+
+    // 0. The garage buildings (each model includes its forecourt out to the road)
+    for (const g of this.garages) add(g.type, g.building.x, g.building.z, g.building.rot, { reach: g.building.reach, name: g.name });
 
     // 1. Direction signs before junctions (placed first: they matter most)
     this.signs = [];
