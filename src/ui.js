@@ -59,7 +59,7 @@ export class UI {
         ${this._walletBar()}
         <div class="menu">
           <button class="primary" data-go="horizon">Play <span class="hint" style="color:#fff;opacity:.85">Open-world career · championships, events, garage</span></button>
-          <div class="menu-label">Arcade <span>· every car unlocked, no credits or XP</span></div>
+          <div class="menu-label">Arcade <span>· all cars unlocked, no rewards</span></div>
           <button data-go="quick">Quick Race <span class="hint">Single player vs AI</span></button>
           <button data-go="split">Split Screen <span class="hint">2 players, one screen</span></button>
           <button data-go="timetrial">Time Trial <span class="hint">Beat your best laps</span></button>
@@ -105,7 +105,7 @@ export class UI {
     };
     st.mode = mode;
     const nPlayers = mode === 'split' ? 2 : 1;
-    const title = { quick: 'Quick Race', split: 'Split Screen', timetrial: 'Time Trial' }[mode] + ' <span class="badge">Arcade</span>';
+    const title = { quick: 'Quick Race', split: 'Split Screen', timetrial: 'Time Trial' }[mode] + ' <span class="badge" title="Arcade: all cars unlocked, no rewards">Arcade: all cars unlocked, no rewards</span>';
     const render = () => {
       const tr = getTrack(st.trackId);
       this.show(`
@@ -244,50 +244,64 @@ export class UI {
   }
 
   // ------------------------------------------------------------ Garage
-  /** The garage at Festival HQ; `opts.onClose` drives away in the selected car. */
+  /**
+   * A garage in the world. opts.mode: 'hq' (Festival HQ: paint, choose and buy cars,
+   * upgrades), 'dealer' (buy cars; a new car is the one you drive away in) or 'tuning'
+   * (upgrades for the car you came in). opts.onClose drives away.
+   */
   garage(opts = {}) {
     const app = this.app, p = app.profile;
+    const mode = opts.mode || 'hq';
     this.rerender = null;
     const sel = getCar(p.selected);
     const lv = p.upgrades[sel.id] || {};
     const again = () => this.garage(opts);
+    const eyebrow = { hq: 'Garage', dealer: 'Dealership', tuning: 'Tuning shop' }[mode];
+    const elsewhere = {
+      hq: '',
+      dealer: 'Upgrades at a tuning shop or Festival HQ · paint and switching cars at Festival HQ.',
+      tuning: 'Buy cars at Apex Motors or Festival HQ · paint and switching cars at Festival HQ.',
+    }[mode];
+    const carCard = (c) => {
+      const owned = p.cars.includes(c.id);
+      return `<div class="card ${c.id === p.selected ? 'selected' : ''}">
+        <div class="row between"><h4>${c.name}</h4>${owned ? (c.id === p.selected ? '<span class="badge gold">Driving</span>' : '<span class="badge done">Owned</span>') : `<span class="badge">${money(c.price)}</span>`}</div>
+        <div class="meta" style="margin-bottom:8px">${c.desc}</div>
+        ${this._statBars(effectiveStats(c, p.upgrades[c.id] || {}))}
+        <div class="row end" style="margin-top:8px">
+          ${owned && c.id !== p.selected && mode === 'hq' ? `<button class="small" data-select="${c.id}">Drive this one</button>` : ''}
+          ${!owned ? `<button class="small primary" data-buy="${c.id}" ${p.money < c.price ? 'disabled' : ''}>Buy · ${money(c.price)}</button>` : ''}
+        </div></div>`;
+    };
+    const upgrades = `<h3>Upgrades — ${sel.name}</h3>
+      <div class="grid-2">
+        ${UPGRADES.map(u => {
+          const lvl = lv[u.id] || 0;
+          const r = canBuyUpgrade(p, sel.id, u.id);
+          return `<div class="card"><div class="row between"><h4>${u.name} <span class="badge">Lv ${lvl}/${u.maxLevel}</span></h4>
+            ${r.reason === 'MAX' ? '<span class="badge gold">MAX</span>' : `<button class="small primary" data-up="${u.id}" ${r.ok ? '' : 'disabled'}>Upgrade · ${money(r.cost)}</button>`}</div>
+            <div class="meta">${u.desc}</div>
+            <div class="stat-bar" style="margin-top:8px"><i style="width:${(lvl / u.maxLevel) * 100}%"></i></div></div>`;
+        }).join('')}
+      </div>`;
+    const cars = (list) => `<h3>${mode === 'dealer' ? 'Cars for sale' : 'Cars'}</h3><div class="grid-2">${list.map(carCard).join('')}</div>`;
+    const body = mode === 'dealer' ? cars(CARS.filter(c => c.price > 0))
+      : mode === 'tuning' ? `<div class="card" style="margin-top:12px"><h4>${sel.name} <span class="badge gold">Driving</span></h4>${this._statBars(effectiveStats(sel, lv))}</div>${upgrades}`
+      : `<h3>Paint</h3>
+        <div class="chips">${PLAYER_COLORS.map((c, ci) => `<div class="swatch ${(p.colorIndex || 0) === ci ? 'active' : ''}" data-paint="${ci}" style="background:${hex(c)}" title="Paint"></div>`).join('')}</div>
+        ${cars(CARS)}${upgrades}`;
     this.show(`
       <div class="panel">
-        <div class="row between"><div><div class="meta eyebrow">Festival HQ</div><h2 style="margin:2px 0 0">Garage</h2></div>
+        <div class="row between"><div><div class="meta eyebrow">${eyebrow}</div><h2 style="margin:2px 0 0">${opts.name || 'Festival HQ'}</h2></div>
           <div style="text-align:right"><div class="money" style="font-size:24px">${money(p.money)}</div><div class="meta">your wallet · earned everywhere on the island</div></div></div>
-        <h3>Paint</h3>
-        <div class="chips">${PLAYER_COLORS.map((c, ci) => `<div class="swatch ${(p.colorIndex || 0) === ci ? 'active' : ''}" data-paint="${ci}" style="background:${hex(c)}" title="Paint"></div>`).join('')}</div>
-        <h3>Cars</h3>
-        <div class="grid-2">
-          ${CARS.map(c => {
-            const owned = p.cars.includes(c.id);
-            return `<div class="card ${c.id === p.selected ? 'selected' : ''}">
-              <div class="row between"><h4>${c.name}</h4>${owned ? (c.id === p.selected ? '<span class="badge gold">Selected</span>' : '<span class="badge done">Owned</span>') : `<span class="badge">${money(c.price)}</span>`}</div>
-              <div class="meta" style="margin-bottom:8px">${c.desc}</div>
-              ${this._statBars(effectiveStats(c, p.upgrades[c.id] || {}))}
-              <div class="row end" style="margin-top:8px">
-                ${owned && c.id !== p.selected ? `<button class="small" data-select="${c.id}">Select</button>` : ''}
-                ${!owned ? `<button class="small primary" data-buy="${c.id}" ${p.money < c.price ? 'disabled' : ''}>Buy · ${money(c.price)}</button>` : ''}
-              </div></div>`;
-          }).join('')}
-        </div>
-        <h3>Upgrades — ${sel.name}</h3>
-        <div class="grid-2">
-          ${UPGRADES.map(u => {
-            const lvl = lv[u.id] || 0;
-            const r = canBuyUpgrade(p, sel.id, u.id);
-            return `<div class="card"><div class="row between"><h4>${u.name} <span class="badge">Lv ${lvl}/${u.maxLevel}</span></h4>
-              ${r.reason === 'MAX' ? '<span class="badge gold">MAX</span>' : `<button class="small primary" data-up="${u.id}" ${r.ok ? '' : 'disabled'}>Upgrade · ${money(r.cost)}</button>`}</div>
-              <div class="meta">${u.desc}</div>
-              <div class="stat-bar" style="margin-top:8px"><i style="width:${(lvl / u.maxLevel) * 100}%"></i></div></div>`;
-          }).join('')}
-        </div>
+        ${body}
+        ${elsewhere ? `<div class="meta" style="margin-top:12px">${elsewhere}</div>` : ''}
         <div class="row end" style="margin-top:16px"><button class="primary" data-back style="min-width:240px">Drive away in the ${sel.name} <kbd>Esc</kbd></button></div>
       </div>`);
     this.on('[data-back]', 'click', () => (opts.onClose ? opts.onClose() : this.mainMenu()));
     this.on('[data-paint]', 'click', (e, el) => { p.colorIndex = +el.dataset.paint; app.save(); again(); });
     this.on('[data-select]', 'click', (e, el) => { p.selected = el.dataset.select; app.save(); again(); });
-    this.on('[data-buy]', 'click', (e, el) => { if (app.buyCar(el.dataset.buy)) { this.toast(`Bought ${getCar(el.dataset.buy).name}!`); } again(); });
+    this.on('[data-buy]', 'click', (e, el) => { if (app.buyCar(el.dataset.buy)) { this.toast(`Bought ${getCar(el.dataset.buy).name}! It's the one you'll drive away in.`); } again(); });
     this.on('[data-up]', 'click', (e, el) => { if (app.buyUpgrade(sel.id, el.dataset.up)) this.toast('Upgrade installed'); again(); });
   }
 
@@ -469,14 +483,14 @@ export class UI {
         <h4>Championship update</h4>
         <div class="row" style="gap:24px">
           <div><div class="meta">Points earned</div><div style="font-size:24px;font-weight:800">+${c.pointsEarned}</div></div>
-          <div><div class="meta">Prize money</div><div class="money" style="font-size:24px">+${money(c.money)}</div></div>
-          ${c.championBonus ? `<div><div class="meta">Title bonus</div><div class="money" style="font-size:24px">+${money(c.championBonus)}</div></div>` : ''}
+          <div><div class="meta">Prize money → wallet</div><div class="money" style="font-size:24px">+${money(c.money)}</div></div>
+          ${c.championBonus ? `<div><div class="meta">Title bonus → wallet</div><div class="money" style="font-size:24px">+${money(c.championBonus)}</div></div>` : ''}
         </div>
         ${c.seriesComplete ? `<div class="notice" style="margin-top:10px">Series complete — you finished <b>${ORD(c.finalRank)}</b> overall.${c.unlocked ? ` <b>${c.unlocked.name}</b> unlocked!` : ''}</div>` : ''}
         ${this._standingsTable(ctx.seriesId, 6)}
       </div>`;
     }
-    const rewardHtml = ctx.horizonReward ? `<div class="notice" style="margin-top:12px">Free Roam reward: <b class="money">+${money(ctx.horizonReward.credits)}</b> · <b>+${ctx.horizonReward.xp} XP</b></div>` : '';
+    const rewardHtml = ctx.horizonReward ? `<div class="notice" style="margin-top:12px">Reward: <b class="money">+${money(ctx.horizonReward.credits)} → wallet</b> · <b>+${ctx.horizonReward.xp} XP</b></div>` : '';
     this.show(`
       <div class="panel">
         <h1>${heading}</h1>

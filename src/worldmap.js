@@ -17,8 +17,8 @@ export const ROAD_STYLE = {
 const ROAD_ORDER = ['dirt', 'lane', 'street', 'road', 'highway'];
 export const ROUTE_COLOR = '#c45bff';
 
-export const MARKER_COLORS = { hub: '#ffd23f', event: '#ff5a1f', stage: '#2fcf78', trap: '#2f7bff', drift: '#b04cff', zone: '#00c2e8', board: '#3ddc84', custom: '#ffd23f', series: '#e8b923', garage: '#14b8a6' };
-export const markerCategory = (m) => m.kind === 'event' ? (m.track.kind === 'stage' ? 'stage' : 'event') : m.kind;
+export const MARKER_COLORS = { hub: '#ffd23f', event: '#ff5a1f', stage: '#2fcf78', trap: '#2f7bff', drift: '#b04cff', zone: '#00c2e8', board: '#3ddc84', custom: '#ffd23f', series: '#e8b923', garage: '#14b8a6', dealer: '#0ea5e9', tuning: '#f97316' };
+export const markerCategory = (m) => m.kind === 'event' ? (m.track.kind === 'stage' ? 'stage' : 'event') : m.kind === 'garage' ? (m.type === 'hq' || !m.type ? 'garage' : m.type) : m.kind;
 
 // ------------------------------------------------------------------ Terrain layer
 const T = {
@@ -213,7 +213,7 @@ export function drawMarkerIcon(ctx, x, y, m, state = {}, r = 11) {
     ctx.restore();
     return;
   }
-  const R = cat === 'hub' || cat === 'series' || cat === 'garage' ? r * 1.25 : r;
+  const R = cat === 'hub' || cat === 'series' || cat === 'garage' || cat === 'dealer' || cat === 'tuning' ? r * 1.25 : r;
   ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
@@ -240,6 +240,20 @@ export function drawMarkerIcon(ctx, x, y, m, state = {}, r = 11) {
     ctx.beginPath(); ctx.arc(0, -g * 0.55, g * 0.48, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = MARKER_COLORS.garage; ctx.fillRect(-g * 0.15, -g * 1.1, g * 0.3, g * 0.55);
     ctx.restore();
+  } else if (cat === 'dealer') {
+    // a car, side on
+    ctx.beginPath(); ctx.roundRect(-g * 1.05, -g * 0.15, g * 2.1, g * 0.6, g * 0.15); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-g * 0.55, -g * 0.15); ctx.lineTo(-g * 0.3, -g * 0.6); ctx.lineTo(g * 0.4, -g * 0.6); ctx.lineTo(g * 0.7, -g * 0.15); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = MARKER_COLORS.dealer;
+    for (const x of [-g * 0.55, g * 0.55]) { ctx.beginPath(); ctx.arc(x, g * 0.45, g * 0.28, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = '#fff';
+    for (const x of [-g * 0.55, g * 0.55]) { ctx.beginPath(); ctx.arc(x, g * 0.45, g * 0.16, 0, Math.PI * 2); ctx.fill(); }
+  } else if (cat === 'tuning') {
+    // a gear
+    ctx.beginPath();
+    for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2, rr = i % 2 ? g * 0.72 : g * 0.95; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = MARKER_COLORS.tuning; ctx.beginPath(); ctx.arc(0, 0, g * 0.35, 0, Math.PI * 2); ctx.fill();
   } else if (cat === 'event' || cat === 'stage') {
     // chequered flag on a pole
     ctx.fillRect(-g * 0.75, -g, g * 0.2, g * 2);
@@ -377,6 +391,7 @@ export class WorldMap {
         <div class="hzmap-top">
           <div class="hzmap-title"><b>MAP</b><span class="hzmap-where"></span></div>
           <div class="hzmap-stats"><span>LEVEL <b>${sum.level.level}</b></span><span>${sum.xp.toLocaleString()} XP</span><span class="money">${Math.round(sum.money).toLocaleString()} cr</span></div>
+          <button class="small" data-nearest title="Route to the nearest garage (G)">🔧 Nearest garage <kbd>G</kbd></button>
           <button class="small ghost" data-close>${this.fromPause ? '← Back' : 'Close'} <kbd>Esc</kbd></button>
         </div>
         <div class="hzmap-side">
@@ -397,7 +412,7 @@ export class WorldMap {
         <div class="hzmap-legend">${FILTERS.map(f => `<button class="hzmap-chip${this.filters[f.id] ? ' on' : ''}" data-filter="${f.id}"><canvas width="44" height="44"></canvas>${f.label}</button>`).join('')}</div>
         <div class="hzmap-zoom"><button data-zoom="1" title="Zoom in">+</button><button data-zoom="-1" title="Zoom out">−</button><button data-center title="Centre on your car (C)">◎</button></div>
         <div class="hzmap-scale"><i></i><span></span></div>
-        <div class="hzmap-hints">Drag to pan · Scroll to zoom · Click a marker or road to select · Double-click sets a waypoint · Right-click clears it · <kbd>C</kbd> centre · <kbd>M</kbd> close</div>
+        <div class="hzmap-hints">Drag to pan · Scroll to zoom · Click a marker or road to select · Double-click sets a waypoint · Right-click clears it · <kbd>C</kbd> centre · <kbd>G</kbd> nearest garage · <kbd>M</kbd> close</div>
         <div class="hzmap-tip hidden"></div>
       </div>`;
     this.root = host.querySelector('.hzmap');
@@ -473,6 +488,7 @@ export class WorldMap {
         return;
       }
       if (e.code === 'KeyC' || e.code === 'Space') { e.preventDefault(); this.centerOnPlayer(); }
+      if (e.code === 'KeyG') this.nearestGarage();
       if (e.code === 'Enter' || e.code === 'NumpadEnter') { if (this.selected) this._setWaypoint(this.hz.waypoint === this.selected ? null : this.selected); }
       if (e.code === 'KeyF' && this.selected) this._fastTravel(this.selected);
       if (e.code === 'Equal' || e.code === 'NumpadAdd' || e.code === 'KeyE') this._zoomAt(this.w / 2, this.h / 2, 1.35);
@@ -481,6 +497,7 @@ export class WorldMap {
     });
     on(window, 'keyup', (e) => this.keys.delete(e.code));
     this.root.querySelector('[data-close]').addEventListener('click', () => this.close());
+    this.root.querySelector('[data-nearest]').addEventListener('click', () => this.nearestGarage());
     this.root.querySelectorAll('[data-zoom]').forEach(b => b.addEventListener('click', () => this._zoomAt(this.w / 2, this.h / 2, +b.dataset.zoom > 0 ? 1.5 : 1 / 1.5)));
     this.root.querySelector('[data-center]').addEventListener('click', () => this.centerOnPlayer());
     this.root.querySelectorAll('[data-filter]').forEach(b => b.addEventListener('click', () => {
@@ -531,6 +548,23 @@ export class WorldMap {
     this._updateHover();
   }
 
+  /** Set the waypoint to the garage nearest by road and select it. */
+  nearestGarage() {
+    const W = this.world, from = this.hz.car.trackIdx;
+    let best = null, bd = Infinity;
+    for (const g of W.garages) { const r = W.route(from, g.idx); if (r && r.length < bd) { bd = r.length; best = g; } }
+    if (!best) return;
+    this.app.audio.click();
+    this._setWaypoint(best);
+    // show the route: frame the car and the garage together
+    const car = this.hz.car.pos;
+    this.view.x = (car.x + best.x) / 2; this.view.z = (car.z + best.z) / 2;
+    const span = Math.max(Math.abs(car.x - best.x), Math.abs(car.z - best.z), 300);
+    this.view.scale = Math.min(this.view.scale, Math.min(this.w, this.h) * 0.6 / span);
+    this._clampView();
+    this.dirtyBase = true;
+  }
+
   centerOnPlayer() {
     this.view.x = this.hz.car.pos.x; this.view.z = this.hz.car.pos.z;
     this.view.scale = Math.max(this.view.scale, 0.35);
@@ -546,7 +580,7 @@ export class WorldMap {
     const W = this.world, out = [];
     for (const m of W.markers) {
       const cat = markerCategory(m);
-      if (cat !== 'hub' && cat !== 'garage' && this.filters[cat] === false) continue;
+      if (!['hub', 'garage', 'dealer', 'tuning'].includes(cat) && this.filters[cat] === false) continue;
       out.push(m);
     }
     if (this.filters.board) for (const b of W.boards) if (!this.hz.prog.boards.includes(b.id)) out.push(b);
@@ -630,7 +664,7 @@ export class WorldMap {
   _kindName(m) {
     return {
       hub: 'Festival hub', trap: 'Speed trap', drift: 'Drift zone', zone: 'Speed zone', board: 'Bonus board', custom: m.name,
-      series: 'Championship', garage: 'Garage · cars, upgrades, paint',
+      series: 'Championship', garage: { hq: 'Garage · buy, choose, upgrade, paint', dealer: 'Dealership · buy cars', tuning: 'Tuning shop · upgrades' }[m.type] || 'Garage',
       event: m.track ? (m.track.kind === 'stage' ? 'Point-to-point stage' : 'Circuit race') : 'Event',
     }[m.kind];
   }

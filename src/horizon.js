@@ -116,8 +116,7 @@ export class Horizon {
   swapCar() {
     const old = this.car;
     const { x, z } = old.pos, heading = old.heading, idx = old.trackIdx, y = old.pos.y;
-    this.scene.remove(old.mesh);
-    disposeGroup(old.mesh);
+    this.scene.remove(old.mesh);   // not disposed: a car's geometry belongs to a template shared with every other car
     this._makeCar();
     this.car.trackIdx = idx;
     this.car.place(x, z, heading, y);
@@ -328,12 +327,14 @@ export class Horizon {
       ring.rotation.x = -Math.PI / 2; ring.position.set(s.p.x, s.p.y + W.roadOf(c.idx).yOff + 0.06, s.p.z);
       g.add(ring); this.eventRings.push(ring);
     }
-    // Garages: a teal pad on the forecourt (drive onto it) and a beam to find it from afar
+    // Garages: a coloured pad on the forecourt (drive onto it) and a beam to find it from afar
+    const GARAGE_COLOR = { hq: 0x22d3b5, dealer: 0x38bdf8, tuning: 0xf97316 };
     for (const gr of W.garages) {
-      const ring = new THREE.Mesh(new THREE.RingGeometry(5.4, 7, 48), new THREE.MeshBasicMaterial({ color: 0x22d3b5, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }));
+      const col = GARAGE_COLOR[gr.type];
+      const ring = new THREE.Mesh(new THREE.RingGeometry(5.4, 7, 48), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }));
       ring.rotation.x = -Math.PI / 2; ring.position.set(gr.x, gr.y + 0.1, gr.z);
       g.add(ring); this.eventRings.push(ring);
-      g.add(makeBeam(0x22d3b5, gr.x, gr.y, gr.z, 90));
+      g.add(makeBeam(col, gr.x, gr.y, gr.z, 90));
     }
     // Speed traps: a camera gantry across the road
     for (const t of W.traps) {
@@ -739,7 +740,7 @@ export class Horizon {
     if (newStars <= 0) return;
     this.addXp(newStars * xpPerStar);
     this.profile.money += newStars * 250;
-    this.hud.toast(`+${newStars * 250} cr`);
+    this.hud.toast(`+${(newStars * 250).toLocaleString()} cr → wallet`);
     this.saveState();
   }
 
@@ -750,7 +751,7 @@ export class Horizon {
     const after = levelForXp(this.prog.xp).level;
     if (after > before) {
       this.profile.money += 2000 * (after - before);
-      setTimeout(() => this.hud.popup(`LEVEL ${after}`, '+2,000 cr'), 900);
+      setTimeout(() => this.hud.popup(`LEVEL ${after}`, `+${(2000 * (after - before)).toLocaleString()} cr → wallet`), 900);
       this.audio.finish();
       this.onLevel(after);
     }
@@ -830,7 +831,7 @@ export class Horizon {
     if (m.kind === 'zone') return P.zones[m.id] ? `${P.zones[m.id]} km/h avg · ${this._starStr(this._stars(P.zones[m.id], m.stars))}` : 'Not set';
     if (m.kind === 'event') return P.events[m.id] ? `Best finish: P${P.events[m.id]}` : 'Not raced yet';
     if (m.kind === 'series') return this.seriesStatus(m.series).text;
-    if (m.kind === 'garage') return 'Buy cars, upgrade, paint';
+    if (m.kind === 'garage') return { hq: 'Buy cars, choose, upgrade, paint', dealer: 'Buy cars', tuning: 'Upgrade your car' }[m.type];
     return '';
   }
 

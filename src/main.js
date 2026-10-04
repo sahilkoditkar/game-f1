@@ -169,7 +169,7 @@ class App {
   /** Enter pressed at a marker in the world: race an event, open a championship or the garage. */
   onWorldMarker(marker) {
     if (marker.kind === 'event') this.startHorizonEvent(marker);
-    else if (marker.kind === 'garage') this.openGarage();
+    else if (marker.kind === 'garage') this.openGarage(marker);
     else if (marker.kind === 'series') this.openSeries(marker);
   }
 
@@ -191,9 +191,10 @@ class App {
     show(close);
   }
 
-  openGarage() {
+  /** A garage in the world: Festival HQ (everything), the dealership (buy) or a tuning shop (upgrades). */
+  openGarage(marker = this.horizon && this.horizon.world.garages[0]) {
     const hz = this.horizon;
-    this._worldPanel((close) => this.ui.garage({ inWorld: true, onClose: close }), () => { hz.swapCar(); hz.onGarageClosed(); });
+    this._worldPanel((close) => this.ui.garage({ inWorld: true, mode: marker.type, name: marker.name, onClose: close }), () => { hz.swapCar(); hz.onGarageClosed(); });
   }
 
   openSeries(marker) {
@@ -208,7 +209,7 @@ class App {
     hz.setPaused(false);
     this.ui.hide();
     hz.teleportTo(hz.world.garages[0]);
-    this.openGarage();
+    this.openGarage(hz.world.garages[0]);
   }
 
   /** A championship round raced from its venue; the results screen returns to the world. */

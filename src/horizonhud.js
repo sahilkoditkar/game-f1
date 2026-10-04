@@ -36,6 +36,7 @@ export class HorizonHUD {
       <div class="hz-top-right">
         <div class="hz-level">LEVEL <b>1</b></div>
         <div class="hz-xpbar"><i style="width:0%"></i></div>
+        <div class="hz-xptext">0 / 1,500 XP</div>
         <div class="hz-wallet"><span>WALLET</span><b class="hz-money">0 cr</b><i class="hz-gain"></i></div>
       </div>
       <div class="bottom-right hz-br">
@@ -61,7 +62,7 @@ export class HorizonHUD {
       speed: q('.speed b'), bar: q('.gear-bar i'), radar: q('.hz-radar'), wp: q('.hz-waypoint'), wpTurn: q('.hz-waypoint .turn'), wpInstr: q('.hz-waypoint .instr'), wpDist: q('.hz-waypoint .info b'), wpName: q('.hz-waypoint .name'),
       prompt: q('.hz-prompt'), live: q('.hz-live'), liveLabel: q('.hz-live .label'), liveScore: q('.hz-live .score'),
       msg: q('.msg'), msgMain: q('.msg .main'), msgSub: q('.msg .sub'), toasts: q('.hz-toasts'),
-      guide: q('.hz-guide'), guideTitle: q('.hz-guide b'), guideText: q('.hz-guide span'), gain: q('.hz-gain'),
+      xptext: q('.hz-xptext'), guide: q('.hz-guide'), guideTitle: q('.hz-guide b'), guideText: q('.hz-guide span'), gain: q('.hz-gain'),
     };
     this.regionTimer = 0;
   }
@@ -102,6 +103,7 @@ export class HorizonHUD {
       const lv = levelForXp(hz.prog.xp);
       q.level.textContent = lv.level;
       q.xp.style.width = `${Math.round((lv.into / lv.need) * 100)}%`;
+      q.xptext.textContent = `${Math.round(lv.into).toLocaleString()} / ${lv.need.toLocaleString()} XP to level ${lv.level + 1}`;
       q.money.textContent = `${Math.round(hz.profile.money).toLocaleString()} cr`;
       // the guide banner
       const g = hz.guideText();
@@ -111,7 +113,7 @@ export class HorizonHUD {
     // a "+N cr" pop beside the wallet whenever money comes in
     const money = Math.round(hz.profile.money);
     if (this.lastMoney !== undefined && money > this.lastMoney) {
-      q.gain.textContent = `+${(money - this.lastMoney).toLocaleString()} cr`;
+      q.gain.textContent = `+${(money - this.lastMoney).toLocaleString()} cr → wallet`;
       q.gain.classList.remove('pop'); void q.gain.offsetWidth; q.gain.classList.add('pop');
       q.money.textContent = `${money.toLocaleString()} cr`;
     }
@@ -136,7 +138,9 @@ export class HorizonHUD {
       const e = hz.prompt;
       q.prompt.classList.remove('hidden');
       let html;
-      if (e.kind === 'garage') html = `<kbd>Enter</kbd> Open the garage at <b>${e.name}</b> · buy cars, upgrade, paint`;
+      if (e.kind === 'garage') html = e.type === 'dealer' ? `<kbd>Enter</kbd> Browse cars at <b>${e.name}</b> · buy and drive away`
+        : e.type === 'tuning' ? `<kbd>Enter</kbd> Upgrade your car at <b>${e.name}</b>`
+        : `<kbd>Enter</kbd> Open the garage at <b>${e.name}</b> · buy, choose, upgrade, paint`;
       else if (e.kind === 'series') {
         const st = hz.seriesStatus(e.series);
         html = st.locked ? `🔒 <b>${e.name}</b> · ${st.text.replace('Locked: ', '')} <span class="meta">(Enter for details)</span>`

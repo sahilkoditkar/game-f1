@@ -199,12 +199,12 @@ button.roam { border-color: rgba(255,210,63,.35); }
 .hz-live { position: absolute; top: 90px; left: 50%; transform: translateX(-50%); text-align: center; text-shadow: 0 2px 10px rgba(0,0,0,.7); }
 .hz-live .label { font-size: 12px; letter-spacing: .3em; color: var(--accent-2); font-weight: 800; }
 .hz-live .score { font-size: 44px; font-weight: 900; font-style: italic; font-variant-numeric: tabular-nums; }
-.hz-toasts { position: absolute; right: 16px; top: 140px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.hz-toasts { position: absolute; right: 16px; top: 166px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .hz-toast { background: rgba(0,0,0,.5); border-radius: 8px; padding: 6px 10px; font-size: 14px; font-weight: 700; animation: fadein .25s; transition: opacity .5s; }
 .hz-toast.out { opacity: 0; }
 .hz-hint { position: absolute; bottom: 14px; right: 20px; font-size: 11px; color: rgba(255,255,255,.55); }
 .hz-prompt { pointer-events: auto; cursor: pointer; }
-.hz-mapbtn { position: absolute; top: 96px; right: 16px; pointer-events: auto; padding: 6px 12px; font-size: 12px; letter-spacing: .15em; border-radius: 8px; background: rgba(0,0,0,.45); }
+.hz-mapbtn { position: absolute; top: 124px; right: 16px; pointer-events: auto; padding: 6px 12px; font-size: 12px; letter-spacing: .15em; border-radius: 8px; background: rgba(0,0,0,.45); }
 #touch-controls:not(.hidden) ~ #hud-layer .hz-hint { display: none; }
 .hz-hint kbd { font-size: 10px; padding: 1px 5px; }
 .hud .hz-br { bottom: 48px; }
@@ -275,3 +275,4 @@ button.roam { border-color: rgba(255,210,63,.35); }
 .eyebrow { letter-spacing: .2em; text-transform: uppercase; font-size: 11px; }
 .round-row { padding: 4px 0; border-bottom: 1px solid var(--panel-border); }
 @media (max-width: 520px) { .wallet-bar { grid-template-columns: repeat(2, 1fr); } }
+.hz-xptext { font-size: 11px; color: rgba(255,255,255,.75); margin: -2px 0 6px; font-variant-numeric: tabular-nums; }
