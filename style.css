@@ -228,23 +228,30 @@ button.roam { border-color: rgba(255,210,63,.35); }
 .hzmap-stats { margin-left: auto; display: flex; align-items: baseline; gap: 16px; font-size: 14px; text-shadow: 0 2px 8px rgba(0,0,0,.6); }
 .hzmap-stats b { color: var(--accent-2); font-size: 18px; }
 .hzmap-stats .money { color: var(--good); font-weight: 800; }
-.hzmap-side { position: absolute; top: 72px; right: 16px; width: 310px; display: flex; flex-direction: column; gap: 10px; }
-.hzmap-card { background: rgba(12,15,22,.9); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; padding: 14px 16px; backdrop-filter: blur(8px); box-shadow: 0 10px 30px rgba(0,0,0,.4); }
-.hzmap-card h4 { margin: 0; font-size: 18px; }
+.hzmap-side { position: absolute; top: 70px; right: 16px; width: 250px; display: flex; flex-direction: column; gap: 6px; }
+.hzmap-card { background: rgba(12,15,22,.86); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 9px 12px; backdrop-filter: blur(8px); box-shadow: 0 6px 18px rgba(0,0,0,.35); font-size: 13px; }
+.hzmap-card .meta { font-size: 12px; line-height: 1.35; }
+.hzmap-card .hzmap-hint { color: rgba(255,255,255,.72); }
+.hzmap-card h4 { margin: 0; font-size: 16px; }
+.hzmap-card button.small { padding: 6px 10px; font-size: 12px; }
 .hzmap-sel-head { display: flex; gap: 12px; align-items: center; }
 .hzmap-sel-head canvas { width: 28px; height: 28px; flex: none; }
-.hzmap-dist { margin-top: 10px; display: flex; gap: 12px; align-items: baseline; }
-.hzmap-dist b { font-size: 22px; color: #e3b6ff; }
+.hzmap-dist { margin-top: 8px; display: flex; gap: 10px; align-items: baseline; }
+.hzmap-dist b { font-size: 19px; color: #e3b6ff; }
 .hzmap-dist span { color: var(--muted); font-size: 13px; }
 .hzmap-best { margin-top: 6px; font-size: 14px; color: var(--accent-2); }
-.hzmap-progress summary { cursor: pointer; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; font-size: 12px; color: var(--muted); }
-.hzmap-progress .hz-stats { margin-top: 8px; padding: 0; background: none; border: 0; }
+.hzmap-progress { padding: 6px 12px; }
+.hzmap-progress summary { cursor: pointer; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; font-size: 11px; color: var(--muted); }
+.hzmap-progress .hz-stats { margin-top: 6px; padding: 0; background: none; border: 0; font-size: 12px; }
+.hzmap-progress .hz-stats div { font-size: 12px; padding: 2px 0; }
 .hzmap-legend { position: absolute; left: 50%; transform: translateX(-50%); bottom: 40px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: calc(100% - 180px); }
 .hzmap-chip { display: flex; align-items: center; gap: 6px; padding: 5px 11px 5px 6px; font-size: 13px; border-radius: 999px; background: rgba(12,15,22,.88); border: 1px solid rgba(255,255,255,.12); opacity: .45; }
 .hzmap-chip.on { opacity: 1; border-color: rgba(255,255,255,.35); }
 .hzmap-chip canvas { width: 22px; height: 22px; }
 .hzmap-zoom { position: absolute; right: 16px; bottom: 40px; display: flex; flex-direction: column; gap: 6px; }
-.hzmap-zoom button { width: 40px; height: 40px; padding: 0; font-size: 20px; border-radius: 10px; background: rgba(12,15,22,.88); }
+.hzmap-zoom button { width: 40px; height: 40px; padding: 0; border-radius: 10px; background: rgba(12,15,22,.88); justify-content: center; align-items: center; text-align: center; line-height: 0; }
+.hzmap-zoom button:hover:not(:disabled) { transform: none; }
+.hzmap-zoom button svg { display: block; flex: none; }
 .hzmap-scale { position: absolute; left: 20px; bottom: 44px; font-size: 12px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px #000; }
 .hzmap-scale i { display: block; height: 6px; border: 2px solid #fff; border-top: none; margin-bottom: 4px; box-shadow: 0 1px 2px rgba(0,0,0,.6); }
 .hzmap-hints { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-size: 12px; color: rgba(255,255,255,.7); text-shadow: 0 1px 3px #000; pointer-events: none; }
