@@ -2,7 +2,7 @@
 // player, with the circuits as drive-up events, speed traps, drift zones, speed
 // zones and bonus boards. Progress lives in profile.horizon.
 import * as THREE from 'three';
-import { World, fbm, smoothstep, mulberry32 } from './world.js';
+import { World, fbm, smoothstep, mulberry32, coastDist } from './world.js';
 import { Car } from './car.js';
 import { DriftFx } from './fx.js';
 import { buildSun, aimSun, buildEnvironment, updateChaseCamera, snapChaseCamera } from './scenekit.js';
@@ -80,7 +80,7 @@ export class Horizon {
     this.car = new Car({ name: p.name, color: PLAYER_COLORS[p.colorIndex || 0], stats: playerStats(p), shape: carDef.shape, isPlayer: true, playerIndex: 0, quality: this.quality });
     this.scene.add(this.car.mesh);
     const saved = this.prog.pos;
-    if (saved && Math.abs(saved[0]) < WORLD_HALF && Math.abs(saved[1]) < WORLD_HALF) {
+    if (saved && Math.abs(saved[0]) < WORLD_HALF && Math.abs(saved[1]) < WORLD_HALF && coastDist(saved[0], saved[1]) > 20) {
       const idx = this.world.nearestGlobal(saved[0], saved[1]).idx;
       this.car.trackIdx = Math.max(0, idx);
       this.tmp.set(saved[0], 0, saved[1]);
@@ -197,28 +197,12 @@ export class Horizon {
     far.computeVertexNormals();
     this.scene.add(new THREE.Mesh(far, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 })));
 
-    // Sea
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_HALF * 4, 3200), new THREE.MeshStandardMaterial({ color: 0x2277cc, roughness: 0.2, metalness: 0.35, transparent: true, opacity: 0.9 }));
+    // The sea, all the way round the island to the horizon
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(24000, 24000), new THREE.MeshStandardMaterial({ color: 0x2277cc, roughness: 0.2, metalness: 0.35, transparent: true, opacity: 0.9 }));
     sea.rotation.x = -Math.PI / 2;
-    sea.position.set(0, SEA_LEVEL, SEA_Z + 1500);
+    sea.position.set(0, SEA_LEVEL, 0);
     this.scene.add(sea);
 
-    // Mountain backdrop along the north, east and west horizons
-    const rand = mulberry32(4242);
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x7d8da0, roughness: 1, flatShading: true });
-    const snowMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true });
-    for (let i = 0; i < 34; i++) {
-      const a = Math.PI + (i / 33) * Math.PI;          // from west (π) through north to east (2π)
-      const r = 3500 + rand() * 500;
-      const coneR = 320 + rand() * 260, h = 380 + rand() * 420;
-      const m = new THREE.Mesh(new THREE.ConeGeometry(coneR, h, 6 + Math.floor(rand() * 3)), rockMat);
-      m.position.set(Math.cos(a) * r, -60 + h / 2, Math.sin(a) * r);
-      m.rotation.y = rand() * Math.PI;
-      this.scene.add(m);
-      const cap = new THREE.Mesh(new THREE.ConeGeometry(coneR * 0.42, h * 0.3, 6), snowMat);
-      cap.position.set(m.position.x, -60 + h - h * 0.15, m.position.z); cap.rotation.y = m.rotation.y;
-      this.scene.add(cap);
-    }
     // Shared terrain material with a subtle noise detail map
     const detail = makeDetailTexture();
     detail.wrapS = detail.wrapT = THREE.RepeatWrapping;
@@ -297,7 +281,7 @@ export class Horizon {
     for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
       const cx = ccx + dx, cz = ccz + dz;
       const wx = (cx + 0.5) * CHUNK, wz = (cz + 0.5) * CHUNK;
-      if (Math.abs(wx) > WORLD_HALF + CHUNK || wz > SEA_Z + CHUNK || wz < -WORLD_HALF - CHUNK) continue;
+      if (coastDist(wx, wz) < -CHUNK) continue;   // open sea: nothing to build
       const d = Math.hypot(wx - px, wz - pz);
       if (d > VIEW_R) continue;
       const key = this._chunkKey(cx, cz);
@@ -360,12 +344,12 @@ export class Horizon {
     const region = W.regionAt(x0, z0).id;
     const density = { forest: 0.0011, grass: 0.00016, alpine: 0.00035, coast: 0.00022, desert: 0.00014, city: 0 }[region] || 0;
     const kind = { forest: 'pine', grass: 'round', alpine: 'pine', coast: 'palm', desert: 'cactus' }[region];
-    if (density > 0 && kind && z0 < SEA_Z) {
+    if (density > 0 && kind && coastDist(x0, z0) > -CHUNK) {
       const count = Math.round(density * CHUNK * CHUNK * (this.highQ ? 1 : 0.55));
       const positions = [];
       for (let t = 0; t < count * 3 && positions.length < count; t++) {
         const x = x0 + (rand() - 0.5) * CHUNK, z = z0 + (rand() - 0.5) * CHUNK;
-        if (z > SEA_Z - 60 || Math.abs(x) > WORLD_HALF) continue;
+        if (coastDist(x, z) < 45) continue;
         if (x > CITY.x0 - 90 && x < CITY.x1 + 90 && z > CITY.z0 - 90 && z < CITY.z1 + 90) continue;
         const near = W.nearestGlobal(x, z, 1);
         if (near.idx >= 0 && near.dist < W.samples[near.idx].hw + 5.5) continue;
@@ -401,6 +385,7 @@ export class Horizon {
       const m = new THREE.Mesh(geo, [facade, facade, this.roofMat, this.roofMat, facade, facade]);
       const gy = W.terrainHeight(b.x, b.z);
       m.position.set(b.x, gy + h / 2 - 0.4, b.z);
+      m.rotation.y = b.rot;
       m.receiveShadow = true;
       chunk.group.add(m);
       chunk.buildings.push(b);
@@ -514,29 +499,39 @@ export class Horizon {
     return down && !was;
   }
 
-  /** World edges, the shoreline and city buildings are solid. */
+  /** The shoreline (a little way into the water) and city buildings are solid. */
   _collideWorld(car) {
-    const lim = WORLD_HALF - 25;
     let hit = 0;
-    const bounce = (axis, sign) => {
-      const v = axis === 'x' ? car.vel.x : car.vel.z;
-      if (v * sign > 0) { hit = Math.max(hit, Math.abs(v)); if (axis === 'x') car.vel.x = -v * 0.3; else car.vel.z = -v * 0.3; }
+    const push = (nx, nz, pen) => {
+      car.pos.x += nx * pen; car.pos.z += nz * pen;
+      const vn = car.vel.x * nx + car.vel.z * nz;
+      if (vn < 0) { hit = Math.max(hit, -vn); car.vel.x -= nx * vn * 1.3; car.vel.z -= nz * vn * 1.3; }
     };
-    if (car.pos.x > lim) { car.pos.x = lim; bounce('x', 1); }
-    if (car.pos.x < -lim) { car.pos.x = -lim; bounce('x', -1); }
-    if (car.pos.z < -lim) { car.pos.z = -lim; bounce('z', -1); }
-    if (car.pos.z > SEA_Z + 45) { car.pos.z = SEA_Z + 45; bounce('z', 1); }
-    // buildings in the surrounding chunks
+    // wading out to sea: pushed back toward the beach
+    const DEEP = -20;
+    const d = coastDist(car.pos.x, car.pos.z);
+    if (d < DEEP) {
+      const e = 3;
+      let gx = coastDist(car.pos.x + e, car.pos.z) - coastDist(car.pos.x - e, car.pos.z);
+      let gz = coastDist(car.pos.x, car.pos.z + e) - coastDist(car.pos.x, car.pos.z - e);
+      const gl = Math.hypot(gx, gz) || 1;
+      push(gx / gl, gz / gl, DEEP - d);
+    }
+    // buildings in the surrounding chunks (each is a box turned to face its street)
     const ccx = Math.floor(car.pos.x / CHUNK), ccz = Math.floor(car.pos.z / CHUNK);
     for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
       const c = this.chunks.get(this._chunkKey(ccx + dx, ccz + dz));
       if (!c || !c.buildings.length) continue;
       for (const b of c.buildings) {
         const ox = car.pos.x - b.x, oz = car.pos.z - b.z;
-        const px = b.hw + 1.1 - Math.abs(ox), pz = b.hd + 1.1 - Math.abs(oz);
+        if (ox * ox + oz * oz > (b.r + 3) * (b.r + 3)) continue;
+        const cs = Math.cos(b.rot), sn = Math.sin(b.rot);
+        const lx = ox * cs - oz * sn, lz = ox * sn + oz * cs;     // car in the building's own frame
+        const px = b.hw + 1.1 - Math.abs(lx), pz = b.hd + 1.1 - Math.abs(lz);
         if (px <= 0 || pz <= 0) continue;
-        if (px < pz) { car.pos.x += Math.sign(ox || 1) * px; bounce('x', -Math.sign(ox || 1)); }
-        else { car.pos.z += Math.sign(oz || 1) * pz; bounce('z', -Math.sign(oz || 1)); }
+        // push out along the shallower local axis, back in world space
+        if (px < pz) { const sx = Math.sign(lx || 1); push(sx * cs, -sx * sn, px); }
+        else { const sz = Math.sign(lz || 1); push(sz * sn, sz * cs, pz); }
       }
     }
     if (hit > 0) {
@@ -809,9 +804,12 @@ function groundColor(W, x, z, h, out) {
   add(tmpC.copy(C.desert).lerp(C.desertAlt, n), w.desert);
   add(tmpC.copy(C.rock).lerp(C.snow, smoothstep(150, 200, h)), w.alpine);
   add(C.city, w.city);
-  const beach = smoothstep(SEA_Z - 160, SEA_Z - 40, z);
-  add(tmpC.copy(C.coast).lerp(C.sand, beach), w.coast);
-  if (z > SEA_Z) out.lerp(C.seabed, smoothstep(SEA_Z, SEA_Z + 120, z));
+  add(C.coast, w.coast);
+  // beaches all round the island (rocky under the mountains), sea bed beyond
+  const cd = coastDist(x, z);
+  const beach = 1 - smoothstep(25, 120, cd);
+  if (beach > 0) out.lerp(tmpC.copy(C.sand).lerp(C.rock, w.alpine * 0.85), beach);
+  if (cd < 0) out.lerp(C.seabed, smoothstep(0, -120, cd));
   out.multiplyScalar(0.92 + n * 0.16);
 }
 

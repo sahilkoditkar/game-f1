@@ -188,7 +188,7 @@ export class HorizonHUD {
     ctx.clearRect(0, 0, cw, ch);
     ctx.save();
     ctx.beginPath(); ctx.roundRect(1, 1, cw - 2, ch - 2, rad); ctx.clip();
-    ctx.fillStyle = '#1d3f66'; ctx.fillRect(0, 0, cw, ch);
+    ctx.fillStyle = 'rgb(38,104,168)'; ctx.fillRect(0, 0, cw, ch);
     // world layer
     ctx.save();
     ctx.translate(cx, cy); ctx.rotate(th); ctx.scale(sc, sc); ctx.translate(-car.pos.x, -car.pos.z);
@@ -198,7 +198,9 @@ export class HorizonHUD {
     if (Math.abs(car.pos.x - CITY.cx) < 900 && Math.abs(car.pos.z - CITY.cz) < 900) {
       for (const b of W.buildings) {
         if (Math.abs(b.x - car.pos.x) > reach || Math.abs(b.z - car.pos.z) > reach) continue;
-        ctx.fillStyle = '#a9adb8'; ctx.fillRect(b.x - b.hw, b.z - b.hd, b.w, b.d);
+        ctx.save(); ctx.translate(b.x, b.z); ctx.rotate(-b.rot);
+        ctx.fillStyle = '#a9adb8'; ctx.fillRect(-b.hw, -b.hd, b.w, b.d);
+        ctx.restore();
       }
     }
     // roads from the grid cells in reach, batched by class

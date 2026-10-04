@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { sampleSpline } from './track.js';
 import { THEMES } from './tracks.js';
 import {
-  ROADS, REGIONS, EVENTS, TRAPS, DRIFTS, SPEEDZONES, BOARD_COUNT, WORLD_HALF, SEA_Z, SEA_LEVEL, CITY,
+  ROADS, REGIONS, EVENTS, TRAPS, DRIFTS, SPEEDZONES, BOARD_COUNT, WORLD_HALF, SEA_LEVEL, CITY, COAST,
 } from './worlddef.js';
 import { getTrack } from './tracks.js';
 
@@ -33,6 +33,52 @@ export function fbm(x, z, s, oct = 3, seed = 0) {
   return sum / norm;
 }
 export function smoothstep(a, b, x) { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+
+// ------------------------------------------------------------------ Coastline
+/** Radius of the plain superellipse coast along direction (c, s) = (cos, sin). */
+function coastBase(c, s) {
+  const a = c >= 0 ? COAST.east : COAST.west, b = s >= 0 ? COAST.south : COAST.north, p = COAST.power;
+  return 1 / Math.pow(Math.abs(c / a) ** p + Math.abs(s / b) ** p, 1 / p);
+}
+/** Outward push of the coast at angle th: wobble, headlands and bays. */
+function coastWobble(th) {
+  // noise sampled round a circle so it wraps seamlessly
+  const f = fbm(Math.cos(th) * 900, Math.sin(th) * 900, 300, 3, 31);
+  let d = Math.max(0, 95 + 125 * f);
+  for (const ft of COAST.features) {
+    let da = th - ft.a;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    d += ft.d * Math.exp(-((da / ft.w) ** 2));
+  }
+  return d;
+}
+/** Signed distance to the coast in metres (roughly): positive on land, negative at sea. */
+export function coastDist(x, z) {
+  const r = Math.hypot(x, z);
+  if (r < 1) return 2600;
+  const c = x / r, s = z / r;
+  const R = coastBase(c, s);
+  if (R - r > 900) return R - r;          // well inland: skip the noise
+  return R + coastWobble(Math.atan2(z, x)) - r;
+}
+/** A point `offset` metres seaward of the coast at angle th. */
+export function coastPointAt(th, offset = 0) {
+  const c = Math.cos(th), s = Math.sin(th);
+  const r = coastBase(c, s) + coastWobble(th) + offset;
+  return [c * r, s * r];
+}
+/** The coastline as a closed list of [x, z] points. */
+export function coastline(n = 1440) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const th = -Math.PI + (i / n) * Math.PI * 2;
+    const c = Math.cos(th), s = Math.sin(th);
+    const r = coastBase(c, s) + coastWobble(th);
+    out.push([c * r, s * r]);
+  }
+  return out;
+}
 
 export function mulberry32(a) {
   return function () {
@@ -66,7 +112,8 @@ export class World {
     let sum = 0;
     for (const r of REGIONS) {
       if (!r.r) continue;
-      const d = r.id === 'city' ? Math.max(Math.abs(x - r.cx), Math.abs(z - r.cz)) : Math.hypot(x - r.cx, z - r.cz);
+      // the city's edge wanders a little so it isn't a perfect circle
+      const d = Math.hypot(x - r.cx, z - r.cz) * (r.id === 'city' ? 1 + 0.12 * fbm(x, z, 260, 2, 12) : 1);
       w[r.id] = 1 - smoothstep(r.r, r.r + r.soft, d);
       sum += w[r.id];
     }
@@ -98,8 +145,8 @@ export class World {
     if (w.alpine > 0.001) h += w.alpine * (60 + 150 * (fbm(x, z, 950, 3, 7) + 0.55) + 35 * fbm(x, z, 260, 2, 8));
     if (w.city > 0.001) h += w.city * (2 + 1.5 * fbm(x, z, 300, 2, 9));
     if (w.coast > 0.001) h += w.coast * (3 + 5 * fbm(x, z, 500, 3, 10));
-    // the shore: drop into the sea
-    const sea = smoothstep(SEA_Z - 220, SEA_Z + 140, z);
+    // the shore: drop into the sea all round the island
+    const sea = 1 - smoothstep(-140, 220, coastDist(x, z));
     h = h * (1 - sea) + (SEA_LEVEL - 7) * sea;
     return h;
   }
@@ -136,18 +183,23 @@ export class World {
         const ex = points[end][0], ez = points[end][1];
         // roads running off the edge of the map are exits, not junctions
         if (Math.abs(ex) > EDGE || Math.abs(ez) > EDGE) continue;
-        let best = null, bd = SNAP * SNAP;
-        sampled.forEach((o, oi) => {
-          if (oi === ri) return;
-          // only onto a road of equal or higher standing (so a highway never bends to meet a lane),
-          // and only onto its interior, never onto its own ends
-          if (RANK[o.def.kind] < RANK[def.kind]) return;
-          const margin = o.def.closed ? 0 : 6;
-          for (let k = margin; k < o.pts.length - margin; k++) {
-            const d = (o.pts[k][0] - ex) ** 2 + (o.pts[k][1] - ez) ** 2;
-            if (d < bd) { bd = d; best = { pts: o.pts, k, def: o.def }; }
-          }
-        });
+        // Prefer a road of equal or higher standing (so a highway never bends to meet a lane);
+        // if there is none in reach, any road will do (a city street ending on a country lane).
+        // Only onto its interior, never onto its own ends.
+        let best = null;
+        for (const anyRank of [false, true]) {
+          let bd = SNAP * SNAP;
+          sampled.forEach((o, oi) => {
+            if (oi === ri) return;
+            if (!anyRank && RANK[o.def.kind] < RANK[def.kind]) return;
+            const margin = o.def.closed ? 0 : 6;
+            for (let k = margin; k < o.pts.length - margin; k++) {
+              const d = (o.pts[k][0] - ex) ** 2 + (o.pts[k][1] - ez) ** 2;
+              if (d < bd) { bd = d; best = { pts: o.pts, k, def: o.def }; }
+            }
+          });
+          if (best) break;
+        }
         if (!best) continue;
         // continue a little past the centreline so the end edge hides under the other road
         const k = best.k, o = best.pts;
@@ -369,6 +421,23 @@ export class World {
   indexAt(roadId, t) {
     const r = this.getRoad(roadId);
     return r.i0 + Math.max(0, Math.min(r.n - 1, Math.round(t * (r.n - 1))));
+  }
+
+  /** Sample index on a named road closest to a point. */
+  indexNear(roadId, x, z) {
+    const r = this.getRoad(roadId);
+    let best = r.i0, bd = Infinity;
+    for (let i = r.i0; i <= r.i1; i++) {
+      const p = this.samples[i].p, d = (p.x - x) ** 2 + (p.z - z) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** Where a placed item sits: by `at` point if given, else by fraction `t`. */
+  _itemIndex(it, which = '') {
+    const at = it['at' + which];
+    return at ? this.indexNear(it.road, at[0], at[1]) : this.indexAt(it.road, it['t' + which]);
   }
 
   /** Track-compatible: clamp a global sample index. */
@@ -614,22 +683,29 @@ export class World {
   }
 
   // ------------------------------------------------------------ City
-  /** Building footprints on the lots between the city streets (shared by the 3D world and the map). */
+  /**
+   * Buildings on whatever land the city's streets leave free: candidates on a loose
+   * grid, each turned to face its nearest street, kept clear of every road and of
+   * each other. Taller towards the centre. Shared by the 3D world and the maps.
+   */
   _buildCity() {
-    const lots = 3, pad = 13;
-    const lotW = (CITY.step - pad * 2) / lots;
     this.buildings = [];
-    for (let bi = 0; bi < 5; bi++) for (let bj = 0; bj < 5; bj++) {
-      const bx0 = CITY.x0 + bi * CITY.step + pad, bz0 = CITY.z0 + bj * CITY.step + pad;
-      for (let li = 0; li < lots; li++) for (let lj = 0; lj < lots; lj++) {
-        const lx = bx0 + (li + 0.5) * lotW, lz = bz0 + (lj + 0.5) * lotW;
-        const rand = mulberry32((bi * 5 + bj) * 9 + li * 3 + lj + 777);
-        if (rand() < 0.14) continue;   // a car park / plaza
-        const w = lotW * (0.55 + rand() * 0.35), d = lotW * (0.55 + rand() * 0.35);
-        const dc = Math.hypot(lx - CITY.cx, lz - CITY.cz);
-        const h = dc < 230 ? 45 + rand() * 90 : dc < 420 ? 18 + rand() * 42 : 9 + rand() * 18;
-        this.buildings.push({ x: lx, z: lz, w, d, h, hw: w / 2, hd: d / 2, mat: rand() });
-      }
+    const rand = mulberry32(777);
+    const STEP = 28;
+    for (let gx = CITY.x0 - 20; gx <= CITY.x1 + 20; gx += STEP) for (let gz = CITY.z0 - 20; gz <= CITY.z1 + 20; gz += STEP) {
+      const x = gx + (rand() - 0.5) * 7, z = gz + (rand() - 0.5) * 7;
+      const w = 14 + rand() * 14, d = 14 + rand() * 14;
+      const plaza = rand() < 0.08, hr = rand(), mat = rand();
+      if (plaza) continue;
+      const near = this.nearestGlobal(x, z, 2);
+      if (near.idx < 0) continue;
+      const s = this.samples[near.idx];
+      const half = Math.hypot(w, d) / 2;
+      if (near.dist - s.hw - 4.5 < half * 0.78) continue;         // keep a pavement's width off the road
+      if (this.buildings.some(b => Math.hypot(b.x - x, b.z - z) < (b.r + half) * 0.8)) continue;
+      const dc = Math.hypot(x - CITY.cx, z - CITY.cz);
+      const h = dc < 230 ? 45 + hr * 90 : dc < 420 ? 18 + hr * 42 : 9 + hr * 18;
+      this.buildings.push({ x, z, w, d, h, hw: w / 2, hd: d / 2, r: half, rot: s.heading, mat });
     }
   }
 
@@ -640,16 +716,16 @@ export class World {
       return { x: s.p.x + s.n.x * side * (s.hw + off), z: s.p.z + s.n.z * side * (s.hw + off), y: s.p.y };
     };
     this.events = EVENTS.map(e => {
-      const idx = this.indexAt(e.road, e.t);
+      const idx = this._itemIndex(e);
       const track = getTrack(e.id);
       const pos = roadside(idx, e.side, 6);
       return { ...e, kind: 'event', idx, track, name: track.name, ...pos, heading: this.samples[idx].heading };
     });
     this.hub = { id: 'hub', kind: 'hub', name: 'Horizon Festival', idx: this.indexAt('ring', 0), ...roadside(this.indexAt('ring', 0), 1, 8) };
-    this.traps = TRAPS.map(t => { const idx = this.indexAt(t.road, t.t); const s = this.samples[idx]; return { ...t, kind: 'trap', name: 'Speed Trap', idx, x: s.p.x, z: s.p.z, y: s.p.y }; });
+    this.traps = TRAPS.map(t => { const idx = this._itemIndex(t); const s = this.samples[idx]; return { ...t, kind: 'trap', name: 'Speed Trap', idx, x: s.p.x, z: s.p.z, y: s.p.y }; });
     const span = (z) => {
       const r = this.getRoad(z.road);
-      let i0 = this.indexAt(z.road, z.t0), i1 = this.indexAt(z.road, z.t1);
+      let i0 = this._itemIndex(z, '0'), i1 = this._itemIndex(z, '1');
       if (i0 > i1) [i0, i1] = [i1, i0];
       const m = this.samples[Math.round((i0 + i1) / 2)];
       const lengthM = (i1 - i0) * SPACING;
@@ -671,7 +747,7 @@ export class World {
       const side = rand() < 0.5 ? -1 : 1;
       const off = s.hw + 9 + rand() * 26;
       const x = s.p.x + s.n.x * side * off, z = s.p.z + s.n.z * side * off;
-      if (z > SEA_Z - 60 || Math.abs(x) > WORLD_HALF - 60 || Math.abs(z) > WORLD_HALF - 60) continue;
+      if (coastDist(x, z) < 70) continue;
       if (this.nearestGlobal(x, z, 1).dist < s.hw + 6) continue;
       if (x > CITY.x0 - 60 && x < CITY.x1 + 60 && z > CITY.z0 - 60 && z < CITY.z1 + 60) continue;
       if (this.boards.some(b => Math.hypot(b.x - x, b.z - z) < 250)) continue;

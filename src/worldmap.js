@@ -1,10 +1,10 @@
 // Free Roam map: a shaded terrain layer (shared with the HUD radar), marker icons,
 // and the full-screen pan/zoom map screen with GPS waypoints and fast travel.
-import { fbm, smoothstep, mulberry32 } from './world.js';
-import { WORLD_HALF, SEA_Z, REGIONS, CITY } from './worlddef.js';
+import { fbm, smoothstep, mulberry32, coastDist, coastline, coastPointAt } from './world.js';
+import { WORLD_HALF, REGIONS, CITY, COAST } from './worlddef.js';
 
-/** The terrain layer covers a little more than the drivable square so the edges read as "beyond". */
-export const MAP_EXTENT = WORLD_HALF + 300;
+/** The terrain layer covers the whole island, its headlands and a margin of sea. */
+export const MAP_EXTENT = WORLD_HALF + 600;
 
 export const ROAD_STYLE = {
   highway: { fill: '#ffc94d', casing: '#6b4a12', min: 3.2 },
@@ -33,59 +33,56 @@ const T = {
  */
 export function terrainLayer(world, size = 1536) {
   if (world._mapTerrain && world._mapTerrain.width === size) return world._mapTerrain;
-  const G = 360;                         // height grid resolution
+  const G = 384;                         // height grid resolution
   const step = (MAP_EXTENT * 2) / (G - 1);
-  const hgt = new Float32Array(G * G);
+  const hgt = new Float32Array(G * G), cdist = new Float32Array(G * G);
   for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
     const x = -MAP_EXTENT + i * step, z = -MAP_EXTENT + j * step;
-    hgt[j * G + i] = world.baseHeight(Math.max(-WORLD_HALF, Math.min(WORLD_HALF, x)), Math.max(-WORLD_HALF, Math.min(WORLD_HALF, z)));
+    hgt[j * G + i] = world.baseHeight(x, z);
+    cdist[j * G + i] = coastDist(x, z);
   }
-  const small = document.createElement('canvas'); small.width = small.height = G;
-  const sctx = small.getContext('2d');
-  const img = sctx.createImageData(G, G);
+  const mk = () => { const c = document.createElement('canvas'); c.width = c.height = G; return c; };
+  const landC = mk(), waterC = mk();
+  const land = landC.getContext('2d').createImageData(G, G), water = waterC.getContext('2d').createImageData(G, G);
   const L = [-0.55, 0.62, -0.56];        // light from the north-west, fairly low
   const ll = Math.hypot(...L); L[0] /= ll; L[1] /= ll; L[2] /= ll;
   const mix = (out, c, k) => { out[0] += c[0] * k; out[1] += c[1] * k; out[2] += c[2] * k; };
+  const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
     const x = -MAP_EXTENT + i * step, z = -MAP_EXTENT + j * step;
-    const h = hgt[j * G + i];
+    const k = j * G + i, h = hgt[k], cd = cdist[k];
+    const o = k * 4;
+    // water: turquoise over the shelf, deep blue offshore
+    const deep = smoothstep(0, 340, -cd);
+    const wc = lerp(T.shallow, T.sea, deep).map(v => v * (0.96 + 0.08 * fbm(x, z, 160, 2, 40)));
+    water.data[o] = wc[0]; water.data[o + 1] = wc[1]; water.data[o + 2] = wc[2]; water.data[o + 3] = 255;
+    // land: region colours, hill shading, beaches
     const hx = hgt[j * G + Math.min(G - 1, i + 1)] - hgt[j * G + Math.max(0, i - 1)];
     const hz = hgt[Math.min(G - 1, j + 1) * G + i] - hgt[Math.max(0, j - 1) * G + i];
-    // exaggerate relief a little so the hills read at map scale
-    let nx = -hx * 2.4 / (2 * step), nz = -hz * 2.4 / (2 * step), ny = 1;
+    let nx = -hx * 2.4 / (2 * step), nz = -hz * 2.4 / (2 * step), ny = 1;   // relief exaggerated to read at map scale
     const nl = Math.hypot(nx, ny, nz); nx /= nl; ny /= nl; nz /= nl;
-    const lit = nx * L[0] + ny * L[1] + nz * L[2];
-    const shade = 0.72 + 0.5 * (lit - 0.62);
+    const shade = 0.72 + 0.5 * (nx * L[0] + ny * L[1] + nz * L[2] - 0.62);
     const c = [0, 0, 0];
-    const w = world.regionWeights(Math.max(-WORLD_HALF, Math.min(WORLD_HALF, x)), z);
+    const w = world.regionWeights(x, z);
     const n = fbm(x, z, 90, 2, 21) * 0.5 + 0.5;
-    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
     mix(c, lerp(T.grass, T.grassAlt, n), w.grass);
     mix(c, T.forest, w.forest);
     mix(c, lerp(T.desert, T.desertAlt, n), w.desert);
     mix(c, lerp(T.rock, T.snow, smoothstep(168, 182, h + 14 * fbm(x, z, 70, 2, 22))), w.alpine);
     mix(c, T.city, w.city);
-    mix(c, lerp(T.coast, T.sand, smoothstep(SEA_Z - 170, SEA_Z - 50, z)), w.coast);
+    mix(c, T.coast, w.coast);
     let col = c.map(v => v * shade);
-    // the sea: shallow turquoise at the shore fading to deep blue
-    const sea = smoothstep(SEA_Z - 20, SEA_Z + 10, z);
-    if (sea > 0) {
-      const deep = smoothstep(SEA_Z, SEA_Z + 260, z);
-      const water = lerp(T.shallow, T.sea, deep);
-      col = lerp(col, water, sea);
-    }
-    // beyond the drivable square
-    const out = Math.max(Math.abs(x), z < 0 ? -z : 0) > WORLD_HALF ? 1 : 0;
-    if (out && z < SEA_Z) col = lerp(col, T.outside, 0.62);
-    const o = (j * G + i) * 4;
-    img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255;
+    const beach = 1 - smoothstep(25, 120, cd);
+    if (beach > 0) col = lerp(col, lerp(T.sand, T.rock, w.alpine * 0.85), beach * 0.95);
+    land.data[o] = col[0]; land.data[o + 1] = col[1]; land.data[o + 2] = col[2]; land.data[o + 3] = 255;
   }
-  sctx.putImageData(img, 0, 0);
+  landC.getContext('2d').putImageData(land, 0, 0);
+  waterC.getContext('2d').putImageData(water, 0, 0);
 
   const cv = document.createElement('canvas'); cv.width = cv.height = size;
   const ctx = cv.getContext('2d');
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(small, 0, 0, size, size);
+  ctx.drawImage(landC, 0, 0, size, size);
   const px = size / (MAP_EXTENT * 2);
   const X = (x) => (x + MAP_EXTENT) * px;
   // fine grain so flat areas don't look like plastic
@@ -99,7 +96,7 @@ export function terrainLayer(world, size = 1536) {
   ctx.globalAlpha = 1;
   for (let k = 0; k < 26000; k++) {
     const x = (rand() * 2 - 1) * WORLD_HALF, z = (rand() * 2 - 1) * WORLD_HALF;
-    if (z > SEA_Z - 80) continue;
+    if (coastDist(x, z) < 60) continue;
     const w = world.regionWeights(x, z);
     const dens = w.forest * 1 + w.alpine * 0.35 + w.grass * 0.08 + w.coast * 0.1;
     if (rand() > dens) continue;
@@ -109,12 +106,21 @@ export function terrainLayer(world, size = 1536) {
     ctx.fillStyle = w.forest > 0.5 ? 'rgba(24,58,26,0.55)' : 'rgba(30,70,32,0.45)';
     ctx.beginPath(); ctx.arc(X(x), X(z), 1.1 + rand() * 1.3, 0, Math.PI * 2); ctx.fill();
   }
-  // shoreline foam
-  ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(0, X(SEA_Z - 6)); ctx.lineTo(size, X(SEA_Z - 6)); ctx.stroke();
-  // city ground: pavement under the blocks
-  ctx.fillStyle = 'rgba(70,74,82,0.85)';
-  ctx.fillRect(X(CITY.x0 - 40), X(CITY.z0 - 40), (CITY.x1 - CITY.x0 + 80) * px, (CITY.z1 - CITY.z0 + 80) * px);
+  // the sea, clipped to the real coastline so the shore is crisp
+  const coast = new Path2D();
+  coastline(2000).forEach(([x, z], i) => { if (i) coast.lineTo(X(x), X(z)); else coast.moveTo(X(x), X(z)); });
+  coast.closePath();
+  const sea = new Path2D();
+  sea.rect(0, 0, size, size);
+  sea.addPath(coast);
+  ctx.save();
+  ctx.clip(sea, 'evenodd');
+  ctx.drawImage(waterC, 0, 0, size, size);
+  ctx.restore();
+  // surf and foam along the shore
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(190,235,255,0.28)'; ctx.lineWidth = 7; ctx.stroke(coast);
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 1.6; ctx.stroke(coast);
   world._mapTerrain = cv;
   return cv;
 }
@@ -469,12 +475,12 @@ export class WorldMap {
     this.dirtyBase = true;
   }
 
-  _fitScale() { return Math.min(this.w - 40, this.h - 170) / (WORLD_HALF * 2 + 300); }
+  _fitScale() { return Math.min(this.w - 40, this.h - 170) / (WORLD_HALF * 2 + 700); }
 
   _clampView() {
     const v = this.view;
     v.scale = Math.max(this._fitScale(), Math.min(3, v.scale));
-    const lim = WORLD_HALF + 200 + 160 / v.scale;   // room to pan the edges clear of the panels
+    const lim = WORLD_HALF + 450 + 160 / v.scale;   // room to pan the coasts clear of the panels
     const hx = Math.max(0, lim - this.w / 2 / v.scale), hz = Math.max(0, lim - this.h / 2 / v.scale);
     v.x = Math.max(-hx, Math.min(hx, v.x));
     v.z = Math.max(-hz, Math.min(hz, v.z));
@@ -572,8 +578,7 @@ export class WorldMap {
     const pt = this.padMode ? { x: this.w / 2, y: this.h / 2 } : this.mouse;
     if (pt) {
       const w = this.toWorld(pt.x, pt.y);
-      const inside = Math.abs(w.x) <= WORLD_HALF && Math.abs(w.z) <= WORLD_HALF && w.z < SEA_Z;
-      this.where.textContent = inside ? W.regionAt(w.x, w.z).name : (w.z >= SEA_Z ? 'The sea' : 'Out of bounds');
+      this.where.textContent = coastDist(w.x, w.z) > 0 ? W.regionAt(w.x, w.z).name : 'The sea';
     }
     if (this.hover && pt) {
       const m = this.hover;
@@ -677,23 +682,22 @@ export class WorldMap {
     const ctx = this.base.getContext('2d'), v = this.view, W = this.world;
     const dpr = this.dpr, s = v.scale;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#1d3f66'; ctx.fillRect(0, 0, this.base.width, this.base.height);
+    ctx.fillStyle = 'rgb(38,104,168)'; ctx.fillRect(0, 0, this.base.width, this.base.height);
     ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * (this.w / 2 - v.x * s), dpr * (this.h / 2 - v.z * s));
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(this.terrain, -MAP_EXTENT, -MAP_EXTENT, MAP_EXTENT * 2, MAP_EXTENT * 2);
-    // drivable boundary
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5 / s; ctx.setLineDash([8 / s, 6 / s]);
-    ctx.strokeRect(-WORLD_HALF, -WORLD_HALF, WORLD_HALF * 2, SEA_Z + WORLD_HALF);
-    ctx.setLineDash([]);
     const tl = this.toWorld(-40, -40), br = this.toWorld(this.w + 40, this.h + 40);
     const view = { x0: tl.x, z0: tl.z, x1: br.x, z1: br.z };
     // city blocks
     for (const b of W.buildings) {
       if (b.x < view.x0 - 60 || b.x > view.x1 + 60 || b.z < view.z0 - 60 || b.z > view.z1 + 60) continue;
       const tone = 150 + Math.min(80, b.h * 0.6);
+      ctx.save();
+      ctx.translate(b.x, b.z); ctx.rotate(-b.rot);
       ctx.fillStyle = `rgb(${tone - 12},${tone - 8},${tone})`;
-      ctx.fillRect(b.x - b.hw, b.z - b.hd, b.w, b.d);
-      if (s > 0.5) { ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1 / s; ctx.strokeRect(b.x - b.hw, b.z - b.hd, b.w, b.d); }
+      ctx.fillRect(-b.hw, -b.hd, b.w, b.d);
+      if (s > 0.5) { ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1 / s; ctx.strokeRect(-b.hw, -b.hd, b.w, b.d); }
+      ctx.restore();
     }
     const stride = Math.max(1, Math.min(8, Math.round(1.5 / (s * W.spacing))));
     strokeRoads(ctx, W, s, { stride, view, widthBoost: s < 0.25 ? 1.6 : 1 });
@@ -730,6 +734,21 @@ export class WorldMap {
         boxes.push({ x: p.x, y: p.y, w: tw + 20, h: fs + 10 });
         ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(10,14,22,0.7)'; ctx.strokeText(text, p.x, p.y);
         ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.fillText(text, p.x, p.y);
+      }
+      ctx.restore();
+    }
+    // headlands and bays, in the water beside them
+    if (s > 0.09) {
+      ctx.save();
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = `italic 600 ${s > 0.3 ? 14 : 12}px Segoe UI, Arial`;
+      for (const f of COAST.features) {
+        const [x, z] = coastPointAt(f.a, f.d < 0 ? 170 : 230);
+        const p = this.toScreen(x, z);
+        const tw = ctx.measureText(f.name).width;
+        if (!free(p.x, p.y, tw + 8, 18)) continue;
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(14,40,70,0.75)'; ctx.strokeText(f.name, p.x, p.y);
+        ctx.fillStyle = 'rgba(214,240,255,0.95)'; ctx.fillText(f.name, p.x, p.y);
       }
       ctx.restore();
     }
