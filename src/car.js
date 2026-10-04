@@ -55,7 +55,8 @@ export class Car {
     this.drifting = false;
     this.slide = 0;          // 0 = tyres gripping, 1 = rear axle sliding (drift state)
     this.wallHit = 0;        // impulse magnitude this frame (for fx/audio)
-    this.carHit = 0;
+    this.carHit = 0;         // change of speed (m/s) from the last car-to-car hit (see crash.js)
+    this.spinTime = 0;       // seconds the rear stays loose after a hard or off-centre hit
     this.autopilot = false;  // finished players cruise under AI control
 
     // race bookkeeping
@@ -88,7 +89,7 @@ export class Car {
     this.pitch = 0;
     this.vf = this.vr = 0;
     this.yawRate = 0; this.latAccel = 0; this.longAccel = 0;
-    this.slide = 0; this.drifting = false;
+    this.slide = 0; this.drifting = false; this.spinTime = 0;
     this.vel.set(0, 0, 0);
     this.updateMesh();
   }
@@ -152,9 +153,10 @@ export class Car {
     if (handbrake) slideT = 1;
     else if (this.slide > 0.05 && slipV > hookSlip && v > 4) slideT = 1;  // keep sliding until hooked up
     else if (slipV > hookSlip * 2.5 && v > 6) slideT = 1;               // spun by an impact / overload
+    if (this.spinTime > 0) { this.spinTime -= dt; slideT = 1; }          // knocked loose by another car
     this.slide += (slideT - this.slide) * Math.min(1, dt * (slideT > this.slide ? 16 : 4));
     const sl = this.slide;
-    this.drifting = sl > 0.5 && v > 5 && slipV > 2.5;
+    this.drifting = sl > 0.5 && v > 5 && slipV > 2.5 && this.spinTime <= 0;   // being spun round is not a drift
 
     // Steering lock shrinks with speed on grip; sliding frees up more lock for counter-steer.
     const lockGrip = (0.62 * s.turn) / (1 + v / 22);

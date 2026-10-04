@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { buildCarMesh } from './carmodels.js';
 import { mulberry32 } from './world.js';
+import { specOf, contact, resolve, applyToCar, carBody } from './crash.js';
 
 const SHAPES = ['hatch', 'hatch', 'classic', 'muscle', 'gt', 'hatch', 'super'];
 const COLORS = [0xd9d9df, 0x2b2e36, 0x8c939e, 0xb52a2a, 0x1f4e9c, 0xe6e6e6, 0x3f3f46, 0x6c8f3a, 0xc27a1a, 0x7a2d6d];
@@ -21,6 +22,7 @@ export class Traffic {
     this.rand = mulberry32(1337);
     this.pool = [];
     this.nearMissCd = 0;
+    this.knocks = 0;
     this.tmp = new THREE.Vector3();
   }
 
@@ -48,7 +50,7 @@ export class Traffic {
       car.road = road; car.dir = dir; car.s = s.li; car.slot = road.kind === 'highway' && this.rand() < 0.4 ? 1 : 0;
       car.lane = this.laneFor(road, dir, car.slot); car.lat = car.lane;
       car.speed = KIND_SPEED[road.kind] * (0.8 + this.rand() * 0.2); car.cruise = KIND_SPEED[road.kind] * (0.85 + this.rand() * 0.25);
-      car.brake = false; car.heading = s.heading + (dir < 0 ? Math.PI : 0); car.lastJunction = -1;
+      car.brake = false; car.heading = s.heading + (dir < 0 ? Math.PI : 0); car.lastJunction = -1; car.knock = null;
       car.mesh.visible = true;
       this._placeMesh(car);
       this.cars.push(car);
@@ -62,7 +64,8 @@ export class Traffic {
     const color = COLORS[Math.floor(this.rand() * COLORS.length)];
     const mesh = buildCarMesh(shape, color, this.hz.quality);
     this.group.add(mesh);
-    return { mesh, pos: new THREE.Vector3(), wheels: mesh.userData.wheels, front: mesh.userData.frontWheels, brakeLights: mesh.userData.brakeLights, spin: 0, steer: 0 };
+    // traffic carries a driver and a passenger or two
+    return { mesh, pos: new THREE.Vector3(), wheels: mesh.userData.wheels, front: mesh.userData.frontWheels, brakeLights: mesh.userData.brakeLights, spin: 0, steer: 0, crash: specOf(shape, 150), knock: null };
   }
 
   _recycle(car) {
@@ -111,6 +114,7 @@ export class Traffic {
 
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const car = this.cars[i];
+      if (car.knock) { this._knocked(car, dt); continue; }
       const road = car.road, N = road.n, sp = W.spacing;
       // target speed: cruise, limited by curvature ahead
       let target = car.cruise;
@@ -178,36 +182,104 @@ export class Traffic {
       for (const l of car.brakeLights) l.material.emissiveIntensity = car.brake ? 3.5 : 0.8;
     }
     this._collidePlayer(dt);
+    this._collideKnocked();
   }
 
-  /** The player bounces off traffic (traffic is heavy and kinematic); near misses give XP. */
+  /** A car sliding out of control hits the traffic around it: pile-ups. */
+  _collideKnocked() {
+    for (const a of this.cars) {
+      if (!a.knock) continue;
+      for (const b of this.cars) {
+        if (b === a || (b.knock && b.knockId < a.knockId)) continue;
+        const A = this._body(a), B = this._body(b);
+        const hit = contact(A, B);
+        if (!hit) continue;
+        const r = resolve(A, B, hit);
+        a.pos.x = A.x; a.pos.z = A.z;
+        if (!r) { b.pos.x = B.x; b.pos.z = B.z; continue; }
+        Object.assign(a.knock, { vx: A.vx, vz: A.vz, w: A.w, rest: 0 });
+        this._knock(b, B, r);
+      }
+    }
+  }
+
+  /**
+   * The player and traffic crash as rigid bodies (crash.js): both cars' mass, where they
+   * touch and how fast they close decide the new speeds and spins. A traffic car that is
+   * hit stops driving its lane and slides free (knocked) until it comes to rest, then
+   * pulls back into traffic. Close passes without a touch give near-miss XP.
+   */
   _collidePlayer(dt) {
     const player = this.hz.car;
-    const R = 2.3;
     this.nearMissCd -= dt;
     for (const c of this.cars) {
       const dx = player.pos.x - c.pos.x, dz = player.pos.z - c.pos.z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 > 4.2 * 4.2) continue;
-      const d = Math.sqrt(d2) || 0.01;
-      if (d < R) {
-        const nx = dx / d, nz = dz / d, pen = R - d;
-        player.pos.x += nx * pen; player.pos.z += nz * pen;
-        const cvx = Math.sin(c.heading) * c.speed, cvz = Math.cos(c.heading) * c.speed;
-        const rvx = player.vel.x - cvx, rvz = player.vel.z - cvz;
-        const vn = rvx * nx + rvz * nz;
-        if (vn < 0) {
-          player.vel.x -= nx * vn * 1.5; player.vel.z -= nz * vn * 1.5;
-          const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
-          player.vf = player.vel.x * fx + player.vel.z * fz;
-          player.vr = player.vel.x * -fz + player.vel.z * fx;
-          player.carHit = Math.max(player.carHit, -vn);
-          c.speed *= 0.6;
-        }
-      } else if (this.nearMissCd <= 0 && player.speed > 18) {
+      if (dx * dx + dz * dz > 6 * 6) continue;
+      const P = carBody(player), T = this._body(c);
+      const hit = contact(P, T);
+      if (hit) {
+        const r = resolve(P, T, hit);
+        player.pos.x = P.x; player.pos.z = P.z;
+        if (!r) continue;
+        applyToCar(player, P, r.dvA, r.dwA);
+        this._knock(c, T, r);
+      } else if (this.nearMissCd <= 0 && player.speed > 18 && !c.knock && Math.hypot(dx, dz) < 4.2) {
         const rel = Math.hypot(player.vel.x - Math.sin(c.heading) * c.speed, player.vel.z - Math.cos(c.heading) * c.speed);
         if (rel > 12) { this.nearMissCd = 1.5; this.hz.nearMiss(); }
       }
     }
+  }
+
+  /** A traffic car as a crash body: driving its lane, or sliding free after a hit. */
+  _body(c) {
+    const k = c.knock, S = c.crash;
+    return { x: c.pos.x, z: c.pos.z, h: c.heading, vx: k ? k.vx : Math.sin(c.heading) * c.speed, vz: k ? k.vz : Math.cos(c.heading) * c.speed, w: k ? k.w : 0, m: S.m, I: S.I, hl: S.hl, hw: S.hw };
+  }
+
+  _knock(c, T, r) {
+    c.pos.x = T.x; c.pos.z = T.z;
+    if (c.knock) { Object.assign(c.knock, { vx: T.vx, vz: T.vz, w: T.w, rest: 0 }); return; }
+    // a nudge at parking speed: it just brakes; anything harder knocks it out of its lane
+    if (r.dvB < 1.2 && r.dwB < 0.3) { c.speed = Math.max(0, T.vx * Math.sin(c.heading) + T.vz * Math.cos(c.heading)); return; }
+    c.knock = { vx: T.vx, vz: T.vz, w: T.w, rest: 0, idx: this.W.roadWrap(c.road, c.road.i0 + Math.round(c.s), true) };
+    c.knockId = ++this.knocks;
+    c.speed = 0; c.brake = true;
+    for (const l of c.brakeLights) l.material.emissiveIntensity = 3.5;
+  }
+
+  /**
+   * A knocked car slides on its tyres: its velocity splits into rolling (along the nose,
+   * slowed by the driver braking, ~6 m/s²) and sideways scrub (tyres sliding, ~8 m/s²),
+   * while yaw friction bleeds off the spin. Once it has been at rest for a moment it
+   * rejoins the nearest lane, facing whichever way it ended up pointing.
+   */
+  _knocked(car, dt) {
+    const W = this.W, k = car.knock;
+    const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
+    let vf = k.vx * fx + k.vz * fz, vr = k.vx * -fz + k.vz * fx;
+    vf -= Math.sign(vf) * Math.min(Math.abs(vf), 6 * dt);
+    vr -= Math.sign(vr) * Math.min(Math.abs(vr), 8 * dt);
+    k.vx = fx * vf - fz * vr; k.vz = fz * vf + fx * vr;
+    k.w -= Math.sign(k.w) * Math.min(Math.abs(k.w), (1.6 + 0.6 * Math.abs(k.w)) * dt);
+    car.pos.x += k.vx * dt; car.pos.z += k.vz * dt;
+    car.heading -= k.w * dt;
+    k.idx = W.nearestIndex(car.pos, k.idx);
+    car.pos.y = W.heightAtPos(car.pos, k.idx) + 0.02;
+    car.mesh.position.copy(car.pos);
+    car.mesh.rotation.set(0, car.heading, 0, 'YXZ');
+    car.spin += (vf / 0.36) * dt;
+    for (const w of car.wheels) w.rotation.x = car.spin;
+    const still = Math.hypot(k.vx, k.vz) < 0.4 && Math.abs(k.w) < 0.15;
+    k.rest = still ? k.rest + dt : 0;
+    if (k.rest < 1.6) return;
+    // back into traffic on the nearest road, in the lane for the way it is facing
+    const s = W.samples[k.idx], road = W.roadOf(k.idx);
+    const dir = (fx * s.t.x + fz * s.t.z) >= 0 ? 1 : -1;
+    car.road = road; car.dir = dir; car.s = s.li; car.slot = 0;
+    car.lane = this.laneFor(road, dir, 0);
+    car.lat = Math.max(-s.hw - 2, Math.min(s.hw + 2, W.lateral(car.pos, k.idx)));
+    car.cruise = KIND_SPEED[road.kind] * (0.85 + this.rand() * 0.25);
+    car.lastJunction = -1; car.speed = 0; car.knock = null;
+    if (!road.closed && (s.li < 4 || s.li > road.n - 5)) { car.s = Math.max(4, Math.min(road.n - 5, s.li)); }
   }
 }

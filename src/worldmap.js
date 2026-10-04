@@ -410,7 +410,7 @@ export class WorldMap {
           </details>
         </div>
         <div class="hzmap-legend">${FILTERS.map(f => `<button class="hzmap-chip${this.filters[f.id] ? ' on' : ''}" data-filter="${f.id}"><canvas width="44" height="44"></canvas>${f.label}</button>`).join('')}</div>
-        <div class="hzmap-zoom"><button data-zoom="1" title="Zoom in">+</button><button data-zoom="-1" title="Zoom out">−</button><button data-center title="Centre on your car (C)">◎</button></div>
+        <div class="hzmap-zoom"><button data-zoom="1" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></button><button data-zoom="-1" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 10h12"/></svg></button><button data-center title="Centre on your car (C)" aria-label="Centre on your car"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10" cy="10" r="6.5" stroke-width="2"/><circle cx="10" cy="10" r="2.2" fill="currentColor" stroke="none"/></svg></button></div>
         <div class="hzmap-scale"><i></i><span></span></div>
         <div class="hzmap-hints">Drag to pan · Scroll to zoom · Click a marker or road to select · Double-click sets a waypoint · Right-click clears it · <kbd>C</kbd> centre · <kbd>G</kbd> nearest garage · <kbd>M</kbd> close</div>
         <div class="hzmap-tip hidden"></div>
@@ -672,7 +672,7 @@ export class WorldMap {
   _renderSel() {
     const m = this.selected, hz = this.hz, box = this.selBox;
     if (!m) {
-      box.innerHTML = `<div class="meta">Click a marker for details, or click any road to drop a waypoint there. Your route is drawn in <b style="color:${ROUTE_COLOR}">purple</b> on the map and the radar.</div>`;
+      box.innerHTML = `<div class="meta hzmap-hint">Click a marker for details, or a road for a waypoint. Route shows in <b style="color:${ROUTE_COLOR}">purple</b>.</div>`;
       return;
     }
     const d = Math.hypot(m.x - hz.car.pos.x, m.z - hz.car.pos.z);
