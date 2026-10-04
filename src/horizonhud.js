@@ -1,7 +1,7 @@
 // Free Roam HUD: speed, compass, radar minimap, waypoint, event prompt,
 // live drift/speed-zone score, XP, and popups/toasts for skills and discoveries.
 import { levelForXp, CITY } from './worlddef.js';
-import { terrainLayer, MAP_EXTENT, ROAD_STYLE, ROUTE_COLOR, MARKER_COLORS, drawMarkerIcon, drawPin, drawPlayerArrow } from './worldmap.js';
+import { terrainLayer, MAP_EXTENT, ROAD_STYLE, ROUTE_COLOR, MARKER_COLORS, drawMarkerIcon, drawPin, drawPlayerArrow, drawPropFootprints } from './worldmap.js';
 
 const RADAR_NEAR = 320, RADAR_FAR = 680;   // metres shown top to bottom, standing still → flat out
 const RADAR_KINDS = ['dirt', 'lane', 'street', 'road', 'highway'];
@@ -203,6 +203,7 @@ export class HorizonHUD {
         ctx.restore();
       }
     }
+    drawPropFootprints(ctx, W.props, { x0: car.pos.x - reach, z0: car.pos.z - reach, x1: car.pos.x + reach, z1: car.pos.z + reach }, sc);
     // roads from the grid cells in reach, batched by class
     const cell = W.cell, R = Math.ceil(reach / cell);
     const gx = Math.floor(car.pos.x / cell), gz = Math.floor(car.pos.z / cell);

@@ -12,7 +12,11 @@ hosted directly on GitHub Pages (or any static host).
   desert, the Frostpeak alpine pass, the Azure Shore and Apex City, whose streets bend and run on uneven
   blocks (two stop short at T-junctions), with buildings turned to face their street and seven roads in
   and out. Twenty-eight roads from a four-lane highway ring and the Shoreline Highway round the coast down
-  to gravel trails, all joined into one network: every road meets another at a real junction. Every circuit and stage
+  to gravel trails, all joined into one network: every road meets another at a real junction, where
+  both surfaces match across the whole crossing and the markings and kerbs stop at its edge. Outside
+  the city the roadsides are lived in: villages, farms with barns, silos and hay bales, forest cabins,
+  desert shacks and a water tower, mountain lodges, beach huts and lifeguard towers, gas stations,
+  billboards, utility poles, boulders, and green direction signs before every junction. Every circuit and stage
   is placed in the world as a drive-up event: roll onto its ring and press Enter to race it against
   Dynamic AI, with prize money and XP. Ten speed traps, six drift zones, four speed zones and forty bonus
   boards give star ratings and XP; levels pay out credits. The full-screen map (M) works like the ones

@@ -103,6 +103,7 @@ export class World {
     this._buildGraph();
     this._buildCity();
     this._placeItems();
+    this._placeProps();
   }
 
   // ------------------------------------------------------------ Regions & terrain
@@ -160,10 +161,13 @@ export class World {
     const near = this.nearestGlobal(x, z, 2);
     if (near.idx < 0) return base;
     const s = this.samples[near.idx];
-    const edge = s.hw + 3.5;
-    if (near.dist <= edge) return s.p.y - 0.08;
+    // flat out to 8 m past the edge: the terrain mesh is a 10 m grid, so a hillside
+    // vertex any closer would slope up through the asphalt between grid points
+    const edge = s.hw + 8;
+    const ry = s.yl === undefined ? s.p.y : this.surfaceAt(s, (x - s.p.x) * s.n.x + (z - s.p.z) * s.n.z);
+    if (near.dist <= edge) return ry - 0.12;
     const k = smoothstep(edge, edge + 45, near.dist);
-    return (s.p.y - 0.08) * (1 - k) + base * k;
+    return (ry - 0.12) * (1 - k) + base * k;
   }
 
   // ------------------------------------------------------------ Roads
@@ -209,7 +213,7 @@ export class World {
         const nx = tz, nz = -tx;
         const inner = points[end === 0 ? 1 : end - 1];
         const side = Math.sign((o[k][0] - inner[0]) * nx + (o[k][1] - inner[1]) * nz) || 1;
-        const over = best.def.width * 0.3;
+        const over = best.def.width * 0.15;
         points[end] = [o[k][0] + nx * side * over, o[k][1] + nz * side * over];
       }
       return { ...def, points };
@@ -318,6 +322,7 @@ export class World {
       }
     }
     this._limitGrades(pairs, 0.10);
+    this._levelJunctions(pairs);
     this.junctionPairs = pairs;
     this.junctions = pairs.map(([i]) => i);
     // per-road lists for traffic: [{ li, other }] sorted along the road
@@ -387,6 +392,148 @@ export class World {
       for (const [c, y] of P) h[c] = y;
       for (let k = 0; k < N; k++) this.samples[road.i0 + k].p.y = h[k];
     });
+  }
+
+  /**
+   * Shape every junction so the two surfaces match across the whole crossing, not
+   * just at its centre. The major road (higher class; on a tie, the one running
+   * through rather than ending there, then the flatter one)
+   * keeps its profile. The minor road, wherever its surface can overlap the major,
+   * takes the major road's surface exactly (tilted across its width if the major
+   * is on a slope: per-vertex heights yl / yr), then eases back to its own profile.
+   * Samples in a junction area are flagged `jz` (drawn as plain asphalt); shoulders
+   * are dropped on whichever side meets the other road (noL / noR).
+   */
+  _levelJunctions(pairs) {
+    const RANK = { highway: 4, road: 3, street: 2, lane: 1, dirt: 0 };
+    const d2 = (p, x, z) => (p.x - x) ** 2 + (p.z - z) ** 2;
+    const nearOn = (road, hint, x, z, span = 120) => {
+      let best = -1, bd = Infinity;
+      for (let k = -span; k <= span; k++) { const q = this.roadWrap(road, hint + k); if (q >= 0) { const d = d2(this.samples[q].p, x, z); if (d < bd) { bd = d; best = q; } } }
+      return { idx: best, dist: Math.sqrt(bd) };
+    };
+    const juncs = pairs.map(([i, j]) => {
+      const ri = this.roadOf(i), rj = this.roadOf(j);
+      const ki = RANK[ri.kind], kj = RANK[rj.kind];
+      // a road that ends here (a T) gives way to the one running through
+      const ends = (q, r) => !r.closed && (this.samples[q].li < 8 || this.samples[q].li > r.n - 9);
+      const ei = ends(i, ri), ej = ends(j, rj);
+      const iMajor = ki !== kj ? ki > kj : ei !== ej ? ej : Math.abs(this.samples[i].slope) <= Math.abs(this.samples[j].slope);
+      return iMajor ? { M: i, m: j } : { M: j, m: i };
+    });
+    // the minor road's zone (local index range) and the major's, around each junction
+    const zoneOf = (c, o) => {
+      const road = this.roadOf(c), other = this.roadOf(o);
+      const reach = this.samples[o].hw + this.samples[c].hw + 4;
+      const far = (q) => nearOn(other, o, this.samples[q].p.x, this.samples[q].p.z).dist > reach;
+      let a = 0, b = 0;
+      while (a < 120) { const q = this.roadWrap(road, c - a - 1); if (q < 0 || far(q)) break; a++; }
+      while (b < 120) { const q = this.roadWrap(road, c + b + 1); if (q < 0 || far(q)) break; b++; }
+      const li = this.samples[c].li;
+      return { a: li - a, b: li + b };
+    };
+    for (const J of juncs) { J.zm = zoneOf(J.m, J.M); J.zM = zoneOf(J.M, J.m); }
+
+    // three passes: a road can be major at one junction and minor at the next
+    for (let pass = 0; pass < 3; pass++) {
+      const perRoad = this.roads.map(() => []);
+      for (const J of juncs) {
+        const minor = this.roadOf(J.m), major = this.roadOf(J.M);
+        const ys = new Map();
+        let hint = J.M;
+        for (let k = J.zm.a; k <= J.zm.b; k++) {
+          const q = this.roadWrap(minor, minor.i0 + k);
+          if (q < 0) continue;
+          const s = this.samples[q];
+          const at = (x, z) => { const r = this.majorSurfaceY(major, hint, x, z); hint = r.idx; return r.y; };
+          ys.set(q - minor.i0, { y: at(s.p.x, s.p.z), yl: at(s.p.x + s.n.x * s.hw, s.p.z + s.n.z * s.hw), yr: at(s.p.x - s.n.x * s.hw, s.p.z - s.n.z * s.hw), major: this.roads.indexOf(major), hint });
+        }
+        perRoad[this.roads.indexOf(minor)].push({ a: J.zm.a, b: J.zm.b, ys });
+      }
+      this.roads.forEach((road, ri) => this._applyJunctionZones(road, perRoad[ri]));
+    }
+    // flags for the renderer: plain surface, and which shoulders to drop
+    for (const J of juncs) {
+      for (const [c, o, z] of [[J.m, J.M, J.zm], [J.M, J.m, J.zM]]) {
+        const road = this.roadOf(c), other = this.roadOf(o);
+        for (let k = z.a; k <= z.b; k++) {
+          const q = this.roadWrap(road, road.i0 + k);
+          if (q < 0) continue;
+          const s = this.samples[q];
+          s.jz = true;
+          for (const side of [1, -1]) {
+            const x = s.p.x + s.n.x * side * (s.hw + 1.4), zz = s.p.z + s.n.z * side * (s.hw + 1.4);
+            const hit = nearOn(other, o, x, zz);
+            if (hit.dist < this.samples[hit.idx].hw + 3) { if (side > 0) s.noL = true; else s.noR = true; }
+          }
+        }
+      }
+    }
+  }
+
+  /** Set a minor road's junction-zone heights and ease its profile back outside them. */
+  _applyJunctionZones(road, Z) {
+    if (!Z.length) return;
+    const N = road.n;
+    const W = (k) => road.closed ? ((k % N) + N) % N : k;
+    const orig = new Float32Array(N);
+    for (let k = 0; k < N; k++) orig[k] = this.samples[road.i0 + k].p.y;
+    const corr = new Float32Array(N), inZone = new Uint8Array(N);
+    const edge = Z.map(z => ({ a: null, b: null }));
+    Z.forEach((z, zi) => {
+      for (const [k, v] of z.ys) {
+        const s = this.samples[road.i0 + k];
+        corr[k] = v.y - orig[k]; inZone[k] = 1;
+        s.yl = v.yl; s.yr = v.yr; s.jroad = v.major; s.jhint = v.hint;
+      }
+      const ka = W(z.a), kb = W(z.b);
+      if (ka >= 0 && ka < N && z.ys.has(ka)) edge[zi].a = z.ys.get(ka).y - orig[ka];
+      if (kb >= 0 && kb < N && z.ys.has(kb)) edge[zi].b = z.ys.get(kb).y - orig[kb];
+    });
+    const ramp = edge.map(e => Math.min(240, Math.max(20, Math.ceil((Math.max(Math.abs(e.a || 0), Math.abs(e.b || 0)) * 1.6) / (0.02 * SPACING)))));
+    for (let k = 0; k < N; k++) {
+      if (inZone[k]) continue;
+      let num = 0, den = 0, fmax = 0;
+      Z.forEach((z, zi) => {
+        let dA = z.a - k, dB = k - z.b;
+        if (road.closed) { dA = ((dA % N) + N) % N; dB = ((dB % N) + N) % N; }
+        else if (dA < 0 && dB < 0) return;
+        const useA = road.closed ? dA <= dB : dA > 0;
+        const m = useA ? dA : dB;
+        const e = useA ? edge[zi].a : edge[zi].b;
+        if (e === null || m <= 0 || m >= ramp[zi]) return;
+        const f = 0.5 + 0.5 * Math.cos(Math.PI * m / ramp[zi]);
+        num += (f / m) * e; den += f / m; fmax = Math.max(fmax, f);
+      });
+      if (den > 0) corr[k] = (num / den) * fmax;
+    }
+    for (let k = 0; k < N; k++) this.samples[road.i0 + k].p.y = orig[k] + corr[k];
+  }
+
+  /**
+   * Height of a road's surface at any point near it: its profile at the point's
+   * projection onto the centreline, flat across. Returns { y, idx } (idx = nearest
+   * sample, a good hint for the next call).
+   */
+  majorSurfaceY(road, hint, x, z) {
+    let best = hint, bd = Infinity;
+    for (let k = -60; k <= 60; k++) {
+      const q = this.roadWrap(road, hint + k);
+      if (q < 0) continue;
+      const p = this.samples[q].p, d = (p.x - x) ** 2 + (p.z - z) ** 2;
+      if (d < bd) { bd = d; best = q; }
+    }
+    const s = this.samples[best];
+    const f = Math.max(-1, Math.min(1, ((x - s.p.x) * s.t.x + (z - s.p.z) * s.t.z) / SPACING));
+    const o = this.samples[this.roadWrap(road, best + (f >= 0 ? 1 : -1), true)];
+    return { y: s.p.y + (o.p.y - s.p.y) * Math.abs(f), idx: best };
+  }
+
+  /** A sample's surface height at lateral offset `lat` (tilted inside junctions). */
+  surfaceAt(s, lat) {
+    if (s.yl === undefined) return s.p.y;
+    const t = Math.max(-1, Math.min(1, lat / s.hw));
+    return t >= 0 ? s.p.y + (s.yl - s.p.y) * t : s.p.y + (s.yr - s.p.y) * -t;
   }
 
   _finishSamples() {
@@ -524,6 +671,8 @@ export class World {
       const h2 = this.samples[this.roadWrap(road, i1 + 1, true)].p.y, h3 = this.samples[this.roadWrap(road, i1 + 2, true)].p.y;
       const u2 = u * u, u3 = u2 * u;
       roadY = 0.5 * ((2 * h1) + (-h0 + h2) * u + (2 * h0 - 5 * h1 + 4 * h2 - h3) * u2 + (-h0 + 3 * h1 - 3 * h2 + h3) * u3);
+      // inside a junction the minor road lies on the major road's surface
+      if (s.jroad !== undefined) roadY = this.majorSurfaceY(this.roads[s.jroad], s.jhint, pos.x, pos.z).y;
       if (onRoad) return roadY;
     }
     const ground = this.terrainHeight(pos.x, pos.z) + 0.06;
@@ -756,6 +905,230 @@ export class World {
     this.markers = [this.hub, ...this.events, ...this.traps, ...this.drifts, ...this.zones];
   }
 }
+
+// ------------------------------------------------------------ Roadside props
+const BILLBOARDS = [
+  { text: 'APEX HORIZON FESTIVAL', bg: '#ff5a1f', fg: '#fff' }, { text: 'DRIFT KINGS · RED MESA', bg: '#2a1440', fg: '#e3a7ff' },
+  { text: 'NEON NIGHTS · APEX CITY', bg: '#0d1b3d', fg: '#3df2ff' }, { text: 'FROSTPEAK SKI LODGE', bg: '#e9f1f7', fg: '#1d3f66' },
+  { text: 'AZURE SHORE RESORT', bg: '#1d7fc4', fg: '#fff' }, { text: 'TURBO COLA', bg: '#c8102e', fg: '#fff' },
+  { text: 'GRIP TYRES', bg: '#111', fg: '#ffd23f' }, { text: 'MESA MOTORS', bg: '#d4ab6e', fg: '#3a2410' },
+];
+/** Footprint, height and look of each building-like prop (w across, d along its facing). */
+const KINDS = {
+  house: { w: [9, 12], d: [8, 10], h: [4.2, 5.6], solid: true, map: true },
+  barn: { w: [11, 13], d: [16, 20], h: [6, 7.5], solid: true, map: true },
+  silo: { w: [6, 6], d: [6, 6], h: [12, 15], solid: true, map: true },
+  cabin: { w: [6, 8], d: [6, 7], h: [3, 3.8], solid: true, map: true },
+  shack: { w: [7, 9], d: [6, 8], h: [3.2, 4], solid: true, map: true },
+  watertower: { w: [8, 8], d: [8, 8], h: [15, 17], solid: true, map: true },
+  lodge: { w: [12, 15], d: [9, 11], h: [5.5, 6.5], solid: true, map: true },
+  hut: { w: [3.6, 4.4], d: [3.6, 4.4], h: [2.6, 3], solid: true, map: true },
+  lifeguard: { w: [3.2, 3.2], d: [3.2, 3.2], h: [5, 5], solid: true, map: true },
+  gas: { w: [28, 28], d: [18, 18], h: [5.5, 5.5], solid: false, map: true },
+  billboard: { w: [2, 2], d: [11, 11], h: [9, 9], solid: false },
+  sign: { w: [1, 1], d: [5.4, 5.4], h: [4.6, 4.6], solid: false },
+  pole: { w: [0.5, 0.5], d: [0.5, 0.5], h: [9, 9], solid: true },
+  rock: { w: [1.5, 5], d: [1.5, 5], h: [1, 3.5], solid: true },
+  hay: { w: [1.6, 1.6], d: [1.6, 1.6], h: [1.5, 1.5], solid: true },
+};
+
+Object.assign(World.prototype, {
+  /**
+   * Things beside the roads outside the city: villages, farms with barns and silos,
+   * forest cabins, desert shacks and water towers, mountain lodges, beach huts and
+   * lifeguard towers, gas stations, billboards, utility poles, rocks, hay bales and
+   * direction signs before junctions. All deterministic. Each prop: { kind, x, z, rot,
+   * w, d, h, y, variant, colliders: [{ x, z, hw, hd, r, rot }] }.
+   */
+  _placeProps() {
+    const rand = mulberry32(4711);
+    const R = (a, b) => a + (b - a) * rand();
+    this.props = [];
+    const grid = new Map();
+    const cellOf = (x, z) => `${Math.floor(x / 30)},${Math.floor(z / 30)}`;
+    const avoid = [this.hub, ...this.events, ...this.traps, ...this.boards,
+      ...this.drifts.flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p]), ...this.zones.flatMap(z => [this.samples[z.i0].p, this.samples[z.i1].p])];
+    const cityPad = 90;
+    const free = (x, z, r, roadGap, coastGap = 35) => {
+      if (coastDist(x, z) < coastGap + r) return false;
+      if (x > CITY.x0 - cityPad && x < CITY.x1 + cityPad && z > CITY.z0 - cityPad && z < CITY.z1 + cityPad) return false;
+      const near = this.nearestGlobal(x, z, 2);
+      if (near.idx >= 0 && near.dist - this.samples[near.idx].hw < r + roadGap) return false;
+      for (const a of avoid) if (Math.hypot(a.x - x, a.z - z) < r + 26) return false;
+      const cx = Math.floor(x / 30), cz = Math.floor(z / 30);
+      for (let dx = -2; dx <= 2; dx++) for (let dz = -2; dz <= 2; dz++) {
+        for (const p of grid.get(`${cx + dx},${cz + dz}`) || []) if (Math.hypot(p.x - x, p.z - z) < p.r + r + 1.5) return false;
+      }
+      return true;
+    };
+    const add = (kind, x, z, rot, extra = {}) => {
+      const K = KINDS[kind];
+      const w = extra.w || R(K.w[0], K.w[1]), d = extra.d || R(K.d[0], K.d[1]), h = extra.h || R(K.h[0], K.h[1]);
+      const r = Math.hypot(w, d) / 2;
+      // sit on the lowest ground under the footprint so nothing floats on a slope
+      const cs = Math.cos(rot), sn = Math.sin(rot);
+      let y = this.terrainHeight(x, z);
+      for (const [lx, lz] of [[-w / 2, -d / 2], [w / 2, -d / 2], [-w / 2, d / 2], [w / 2, d / 2]]) y = Math.min(y, this.terrainHeight(x + lx * cs + lz * sn, z - lx * sn + lz * cs));
+      const p = { kind, x, z, rot, w, d, h, y, r, variant: Math.floor(rand() * 6), map: !!K.map, colliders: [], ...extra };
+      if (K.solid) p.colliders.push({ x, z, hw: w / 2, hd: d / 2, r, rot });
+      this.props.push(p);
+      const key = cellOf(x, z);
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push(p);
+      return p;
+    };
+    /** Spot beside a road sample: side ±1, `off` metres past the edge; its +x faces the road. */
+    const beside = (idx, side, off) => {
+      const s = this.samples[idx];
+      return { x: s.p.x + s.n.x * side * (s.hw + off), z: s.p.z + s.n.z * side * (s.hw + off), rot: s.heading + (side > 0 ? Math.PI : 0), s };
+    };
+    const roadsNear = (x, z, rad) => {
+      const out = [];
+      for (let i = 0; i < this.count; i += 6) { const p = this.samples[i].p; if (Math.abs(p.x - x) < rad && Math.abs(p.z - z) < rad && Math.hypot(p.x - x, p.z - z) < rad) out.push(i); }
+      return out;
+    };
+
+    // 1. Direction signs before junctions (placed first: they matter most)
+    this.signs = [];
+    for (const [i, j] of this.junctionPairs) {
+      for (const [c, o] of [[i, j], [j, i]]) {
+        const road = this.roadOf(c), other = this.roadOf(o);
+        if (road.kind === 'street' && other.kind === 'street') continue;
+        const arms = [12, -12].map(k => this.roadWrap(other, o + k)).filter(q => q >= 0 && this.roadWrap(other, o + Math.sign(q - o) * 40) >= 0);
+        if (!arms.length) continue;
+        const sc = this.samples[c];
+        for (const dir of [1, -1]) {
+          const k = this.roadWrap(road, c - dir * 30);
+          if (k < 0 || this.roadWrap(road, c - dir * 45) < 0) continue;
+          if (this.samples[k].jz) continue;
+          const crowded = (this.roadJunctions[this.samples[c].road] || []).some(J => J.li !== sc.li && Math.abs(J.li - this.samples[k].li) < 22);
+          if (crowded) continue;
+          let left = false, right = false;
+          for (const q of arms) {
+            const lat = (this.samples[q].p.x - sc.p.x) * sc.n.x + (this.samples[q].p.z - sc.p.z) * sc.n.z;
+            if (lat * dir > 0) left = true; else right = true;
+          }
+          const s = this.samples[k];
+          const side = -dir;                        // drivers keep right: the sign stands on their right
+          // the board is 5.4 m wide and stands across the verge, its inner edge 3 m off the road
+          const x = s.p.x + s.n.x * side * (s.hw + 6), z = s.p.z + s.n.z * side * (s.hw + 6);
+          if (!free(x, z, 2.8, 0.2, 10)) continue;
+          const face = Math.atan2(-dir * s.t.x, -dir * s.t.z);   // board faces the oncoming driver
+          const p = add('sign', x, z, face, { text: other.name, left, right, kindOf: other.kind });
+          p.colliders.push(...[-2.1, 2.1].map(l => ({ x: x + Math.cos(face) * l, z: z - Math.sin(face) * l, hw: 0.2, hd: 0.2, r: 0.3, rot: face })));
+          this.signs.push(p);
+        }
+      }
+    }
+
+    // 2. Gas stations at a few busy spots
+    for (const [road, ax, az] of [['coast', -1000, 2290], ['ring', -1500, -900], ['ew', 650, 150], ['coast', 2700, 1250], ['spine', 60, -1200]]) {
+      const i = this.indexNear(road, ax, az);
+      for (const side of [1, -1]) {
+        const b = beside(i, side, 17);
+        if (!free(b.x, b.z, 14, 2)) continue;
+        const p = add('gas', b.x, b.z, b.rot);
+        const cs = Math.cos(b.rot), sn = Math.sin(b.rot);
+        const at = (lx, lz) => ({ x: b.x + lx * cs + lz * sn, z: b.z - lx * sn + lz * cs });
+        // the kiosk at the back and two pump islands under the canopy are solid
+        // (in a prop's own frame +x points at the road, +z along it)
+        for (const [lx, lz, hw, hd] of [[-8, 0, 4.5, 3.5], [2, -4, 0.8, 2.2], [2, 4, 0.8, 2.2]]) {
+          const q = at(lx, lz);
+          p.colliders.push({ x: q.x, z: q.z, hw, hd, r: Math.hypot(hw, hd), rot: b.rot });
+        }
+        break;
+      }
+    }
+
+    // 3. Villages: houses along the roads near a few crossroads
+    const VILLAGES = [[-1150, 1000], [-800, 2050], [600, 1150], [-2420, 760], [2470, 160], [-1350, -500], [1250, -650]];
+    for (const [vx, vz] of VILLAGES) {
+      for (const i of roadsNear(vx, vz, 260)) {
+        const s = this.samples[i];
+        if (s.jz || rand() > 0.55) continue;
+        const side = rand() < 0.5 ? 1 : -1;
+        const b = beside(i, side, R(9, 14));
+        const region = this.regionAt(b.x, b.z).id;
+        const kind = region === 'desert' ? 'shack' : region === 'forest' ? 'cabin' : region === 'alpine' ? 'lodge' : 'house';
+        if (free(b.x, b.z, kind === 'lodge' ? 7.5 : 6.5, 3)) add(kind, b.x, b.z, b.rot);
+      }
+    }
+
+    // 4. Along every road outside the city: farms, cabins, shacks, lodges, billboards, poles
+    for (const road of this.roads) {
+      if (road.kind === 'street') continue;
+      const big = road.kind === 'highway' || road.kind === 'road';
+      // utility poles along a few long stretches of the country roads
+      const poles = road.kind !== 'dirt' && rand() < 0.75;
+      let poleSide = rand() < 0.5 ? 1 : -1, poleRun = 0;
+      for (let li = 10; li < road.n - 10; li += 20) {
+        const idx = road.i0 + li, s = this.samples[idx];
+        if (s.jz) continue;
+        const region = this.regionAt(s.p.x, s.p.z).id;
+        if (region === 'city') continue;
+        if (poles && region !== 'forest' && region !== 'alpine') {
+          if (poleRun <= 0 && rand() < 0.02) { poleRun = 30 + Math.floor(rand() * 40); poleSide = -poleSide; }
+          if (poleRun-- > 0) { const b = beside(idx, poleSide, 4.5); if (free(b.x, b.z, 0.4, 3, 20)) add('pole', b.x, b.z, b.rot); }
+        }
+        if (li % 60 !== 10) continue;
+        const r = rand(), side = rand() < 0.5 ? 1 : -1;
+        if (big && r < 0.07) {
+          const b = beside(idx, side, 12);
+          const ad = BILLBOARDS[Math.floor(rand() * BILLBOARDS.length)];
+          if (free(b.x, b.z, 5.5, 4)) {
+            const p = add('billboard', b.x, b.z, b.rot, ad);
+            const cs = Math.cos(b.rot), sn = Math.sin(b.rot);
+            p.colliders.push(...[-3.5, 3.5].map(l => ({ x: b.x + l * sn, z: b.z + l * cs, hw: 0.3, hd: 0.3, r: 0.4, rot: b.rot })));
+          }
+          continue;
+        }
+        if (r > 0.16) continue;
+        if (region === 'grass' || region === 'coast') {
+          // a farm: house by the road, barn and silo behind, hay bales in the field
+          const b = beside(idx, side, R(10, 14));
+          if (!free(b.x, b.z, 6.5, 3)) continue;
+          add('house', b.x, b.z, b.rot);
+          if (region === 'grass' && rand() < 0.7) {
+            const back = beside(idx, side, 38), bx = back.x + s.t.x * R(-12, 12), bz = back.z + s.t.z * R(-12, 12);
+            if (free(bx, bz, 12, 20)) add('barn', bx, bz, back.rot + R(-0.2, 0.2));
+            const sx = bx + s.t.x * 16, sz = bz + s.t.z * 16;
+            if (free(sx, sz, 4, 20)) add('silo', sx, sz, 0);
+            const fx = back.x + s.n.x * side * 35, fz = back.z + s.n.z * side * 35;
+            for (let h = 0; h < 8; h++) { const hx = fx + R(-30, 30), hz = fz + R(-30, 30); if (free(hx, hz, 1.2, 10)) add('hay', hx, hz, rand() * Math.PI); }
+          }
+        } else if (region === 'forest') {
+          const b = beside(idx, side, R(9, 16));
+          if (free(b.x, b.z, 6, 4)) add('cabin', b.x, b.z, b.rot + R(-0.3, 0.3));
+        } else if (region === 'desert') {
+          const b = beside(idx, side, R(10, 18));
+          if (rand() < 0.2) { if (free(b.x, b.z, 6, 6)) add('watertower', b.x, b.z, 0); }
+          else if (free(b.x, b.z, 6, 4)) add('shack', b.x, b.z, b.rot + R(-0.3, 0.3));
+        } else if (region === 'alpine') {
+          const b = beside(idx, side, R(12, 18));
+          if (free(b.x, b.z, 7.5, 4)) add('lodge', b.x, b.z, b.rot);
+        }
+      }
+    }
+
+    // 5. Beach huts and lifeguard towers along the south shore
+    for (let th = 0.35; th < 2.75; th += 0.035) {
+      if (rand() > 0.45) continue;
+      const [x, z] = coastPointAt(th, -R(30, 55));
+      const kind = rand() < 0.25 ? 'lifeguard' : 'hut';
+      if (free(x, z, 3, 8, 12)) add(kind, x, z, -th);   // +x faces the sea
+    }
+
+    // 6. Rocks: boulders on the mountains and in the desert, a few in the forest
+    for (let t = 0; t < 5000; t++) {
+      const x = R(-WORLD_HALF, WORLD_HALF), z = R(-WORLD_HALF, WORLD_HALF);
+      const w = this.regionWeights(x, z);
+      const p = w.alpine * 0.5 + w.desert * 0.35 + w.forest * 0.12;
+      if (rand() > p) continue;
+      const size = R(1.6, w.alpine > 0.5 ? 5 : 3.5);
+      if (free(x, z, size / 2, 5)) add('rock', x, z, rand() * Math.PI * 2, { w: size, d: size * R(0.7, 1), h: size * R(0.5, 0.8), tint: w.desert > 0.5 ? 1 : 0 });
+    }
+  },
+});
 
 // ------------------------------------------------------------ Profile helpers
 function smoothProfile(out, W, closed, half) {

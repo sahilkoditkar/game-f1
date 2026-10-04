@@ -9,6 +9,7 @@ import { buildSun, aimSun, buildEnvironment, updateChaseCamera, snapChaseCamera 
 import { addTrees } from './scenery.js';
 import { HorizonHUD } from './horizonhud.js';
 import { Traffic } from './traffic.js';
+import { PropKit, mergeByMaterial } from './props.js';
 import { getCar, PLAYER_COLORS } from './data.js';
 import { playerStats } from './career.js';
 import { getControl } from './input.js';
@@ -59,6 +60,14 @@ export class Horizon {
 
     this._buildRoads();
     this._buildStatic();
+    // roadside props, bucketed by chunk for streaming
+    this.propKit = new PropKit(this.highQ);
+    this.propsByChunk = new Map();
+    for (const p of this.world.props) {
+      const key = this._chunkKey(Math.floor(p.x / CHUNK), Math.floor(p.z / CHUNK));
+      if (!this.propsByChunk.has(key)) this.propsByChunk.set(key, []);
+      this.propsByChunk.get(key).push(p);
+    }
     this._buildProps();
     this._setupPlayer();
     this.traffic = new Traffic(this, this.highQ ? 26 : 14);
@@ -110,36 +119,41 @@ export class Horizon {
   _buildRoads() {
     const g = new THREE.Group();
     const texByKind = {};
+    const padTex = makeWorldRoadTexture('pad', 0);
+    const padMat = new THREE.MeshStandardMaterial({ map: padTex, roughness: 0.9, metalness: 0.02 });
     for (const road of this.world.roads) {
       if (!texByKind[road.kind]) texByKind[road.kind] = makeWorldRoadTexture(road.kind, road.width);
       const tex = texByKind[road.kind];
       const yo = road.yOff;
       const reps = road.closed ? Math.max(1, Math.round(road.length / 14)) : road.length / 14;
-      const surf = this._strip(road, (s) => s.hw, (s) => -s.hw, yo, yo, (li, side) => [side === 0 ? 0 : 1, (li / road.n) * reps]);
+      const uv = (li, side) => [side === 0 ? 0 : 1, (li / road.n) * reps];
       const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: road.kind === 'dirt' ? 1 : 0.9, metalness: 0.02 });
-      const m = new THREE.Mesh(surf, mat); m.receiveShadow = true; g.add(m);
-      // shoulders: a pavement kerb in the city, a sloping gravel verge elsewhere
+      // Inside junctions the surface is plain asphalt (no edge or centre lines running
+      // across the other road). A minor road there sits a few centimetres under the
+      // major so the two never fight; both lie on the major road's surface.
+      const W = this.world;
+      const inJ = (li) => !!W.samples[road.i0 + (li % road.n)].jz;
+      for (const [a, b] of runs(road, (li) => !inJ(li))) {
+        const m = new THREE.Mesh(this._strip(road, (s) => s.hw, (s) => -s.hw, yo, yo, uv, a, b), mat); m.receiveShadow = true; g.add(m);
+      }
+      for (const [a, b] of runs(road, inJ)) {
+        const sub = W.samples[road.i0 + (a % road.n)].jroad !== undefined ? -0.035 : 0;
+        const m = new THREE.Mesh(this._strip(road, (s) => s.hw, (s) => -s.hw, yo + sub, yo + sub, uv, a, b, true), road.kind === 'dirt' ? mat : padMat); m.receiveShadow = true; g.add(m);
+      }
+      // shoulders: a pavement kerb in the city, a sloping gravel verge elsewhere; dropped
+      // on whichever side another road joins
       const street = road.kind === 'street';
       const shW = street ? 2.4 : 2.8;
       const shColor = street ? 0x9a9ca2 : (road.kind === 'dirt' ? 0x7f6b4e : 0x8e8a7c);
       const shMat = new THREE.MeshStandardMaterial({ color: shColor, roughness: 1 });
-      const yOuter = street ? yo + 0.14 : yo - 0.1;
-      const L = this._strip(road, (s) => s.hw + shW, (s) => s.hw, yOuter, street ? yo + 0.14 : yo);
-      const R = this._strip(road, (s) => -s.hw, (s) => -s.hw - shW, street ? yo + 0.14 : yo, yOuter);
-      for (const sg of [L, R]) { const sm = new THREE.Mesh(sg, shMat); sm.receiveShadow = true; g.add(sm); }
-    }
-    // Junction pads: a plain asphalt disc over every crossing and T-junction so the
-    // two roads' edges, kerbs and markings don't collide where they meet.
-    const padTex = makeWorldRoadTexture('pad', 0);
-    const padMat = new THREE.MeshStandardMaterial({ map: padTex, roughness: 0.9, metalness: 0.02, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-    for (const [i, j] of this.world.junctionPairs) {
-      const a = this.world.samples[i], b = this.world.samples[j];
-      const r = Math.max(a.hw, b.hw) + 2.2;
-      const pad = new THREE.Mesh(new THREE.CircleGeometry(r, 28), padMat);
-      pad.rotation.x = -Math.PI / 2;
-      pad.position.set((a.p.x + b.p.x) / 2, Math.max(a.p.y, b.p.y) + Math.max(this.world.roadOf(i).yOff, this.world.roadOf(j).yOff) + 0.02, (a.p.z + b.p.z) / 2);
-      pad.receiveShadow = true;
-      g.add(pad);
+      const yOuter = street ? yo + 0.14 : yo - 0.1, yInner = street ? yo + 0.14 : yo;
+      const sideOk = (key) => (li) => !W.samples[road.i0 + (li % road.n)][key];
+      for (const [a, b] of runs(road, sideOk('noL'))) {
+        const m = new THREE.Mesh(this._strip(road, (s) => s.hw + shW, (s) => s.hw, yOuter, yInner, null, a, b, true), shMat); m.receiveShadow = true; g.add(m);
+      }
+      for (const [a, b] of runs(road, sideOk('noR'))) {
+        const m = new THREE.Mesh(this._strip(road, (s) => -s.hw, (s) => -s.hw - shW, yInner, yOuter, null, a, b, true), shMat); m.receiveShadow = true; g.add(m);
+      }
     }
     this.roadGroup = g;
     this.scene.add(g);
@@ -150,21 +164,25 @@ export class Horizon {
    * per-side height offsets. Loops get the first vertex pair duplicated at the end so
    * the texture coordinate keeps running across the seam instead of snapping back to 0.
    */
-  _strip(road, a, b, ya, yb, uvFn = null) {
+  _strip(road, a, b, ya, yb, uvFn = null, from = 0, to = null, tilt = false) {
     const W = this.world, N = road.n;
-    const M = road.closed ? N + 1 : N;
+    const last = to === null ? (road.closed ? N : N - 1) : to;
+    const M = last - from + 1;
     const pos = new Float32Array(M * 6), uv = new Float32Array(M * 4);
-    for (let li = 0; li < M; li++) {
+    for (let m = 0; m < M; m++) {
+      const li = from + m;
       const s = W.samples[road.i0 + (li % N)];
       const A = a(s), B = b(s);
-      pos.set([s.p.x + s.n.x * A, s.p.y + ya, s.p.z + s.n.z * A, s.p.x + s.n.x * B, s.p.y + yb, s.p.z + s.n.z * B], li * 6);
+      // inside a junction a minor road is tilted to lie on the major road's surface
+      const yA = tilt ? W.surfaceAt(s, A) : s.p.y, yB = tilt ? W.surfaceAt(s, B) : s.p.y;
+      pos.set([s.p.x + s.n.x * A, yA + ya, s.p.z + s.n.z * A, s.p.x + s.n.x * B, yB + yb, s.p.z + s.n.z * B], m * 6);
       const ua = uvFn ? uvFn(li, 0) : [0, li / 4], ub = uvFn ? uvFn(li, 1) : [1, li / 4];
-      uv.set([ua[0], ua[1], ub[0], ub[1]], li * 4);
+      uv.set([ua[0], ua[1], ub[0], ub[1]], m * 4);
     }
     const idx = [];
-    for (let li = 0; li < M - 1; li++) {
-      const j = li + 1;
-      idx.push(li * 2, li * 2 + 1, j * 2, li * 2 + 1, j * 2 + 1, j * 2);
+    for (let m = 0; m < M - 1; m++) {
+      const j = m + 1;
+      idx.push(m * 2, m * 2 + 1, j * 2, m * 2 + 1, j * 2 + 1, j * 2);
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -362,6 +380,12 @@ export class Horizon {
 
     // City blocks: buildings on lots between the streets
     if (inCity) this._buildCityLots(chunk, x0, z0);
+    // Roadside props; the solid ones join the chunk's colliders
+    const props = this.propsByChunk.get(this._chunkKey(cx, cz));
+    if (props) {
+      this.propKit.build(group, props);
+      for (const p of props) chunk.buildings.push(...p.colliders);
+    }
     return chunk;
   }
 
@@ -370,7 +394,9 @@ export class Horizon {
     if (!this.facadeMats) {
       this.facadeMats = [0x9aa4b4, 0x6f8aa8, 0xb9ad98, 0x7c7f88].map(c => new THREE.MeshStandardMaterial({ map: makeFacadeTexture(c), roughness: 0.55, metalness: 0.15 }));
       this.roofMat = new THREE.MeshStandardMaterial({ color: 0x4a4d55, roughness: 1 });
+      for (const m of [...this.facadeMats, this.roofMat]) m.userData.shared = true;   // reused by every city chunk
     }
+    const holder = new THREE.Group();   // merged per material below: one draw call per facade
     for (const b of W.buildings) {
       if (Math.abs(b.x - x0) > CHUNK / 2 || Math.abs(b.z - z0) > CHUNK / 2) continue;
       const { w, d, h } = b;
@@ -386,10 +412,11 @@ export class Horizon {
       const gy = W.terrainHeight(b.x, b.z);
       m.position.set(b.x, gy + h / 2 - 0.4, b.z);
       m.rotation.y = b.rot;
-      m.receiveShadow = true;
-      chunk.group.add(m);
+      holder.add(m);
       chunk.buildings.push(b);
     }
+    mergeByMaterial(chunk.group, holder);
+    holder.traverse(o => { if (o.isMesh) o.geometry.dispose(); });
   }
 
   // ------------------------------------------------------------ Game loop
@@ -776,15 +803,49 @@ export class Horizon {
     this.fx.dispose();
     this.input.setTouchVisible(false);
     if (this.envTex) this.envTex.dispose();
-    disposeGroup(this.scene);
+    disposeGroup(this.scene, true);
   }
 }
 
 // ------------------------------------------------------------------ Helpers
-function disposeGroup(root) {
+/**
+ * Runs of consecutive local sample indices along a road where `keep(li)` holds, as
+ * [from, to] pairs (inclusive, sharing their end samples so strips join up). A loop's
+ * run may continue past N - 1 (indices are taken modulo N).
+ */
+function runs(road, keep) {
+  const N = road.n, last = road.closed ? N : N - 1;
+  const out = [];
+  let start = -1;
+  for (let li = 0; li <= last; li++) {
+    const k = keep(li % N);
+    if (k && start < 0) start = li;
+    if ((!k || li === last) && start >= 0) {
+      // a run ends on the first excluded sample so neighbouring strips share it and meet
+      if (li > start) out.push([start, li]);
+      start = -1;
+    }
+  }
+  // a loop whose run wraps through index 0: join the last run onto the first
+  if (road.closed && out.length > 1 && out[0][0] === 0 && out[out.length - 1][1] === last) {
+    const tail = out.pop();
+    out[0] = [tail[0], out[0][1] + N];
+  }
+  return out;
+}
+
+/** Free a group's GPU resources, keeping geometry, materials and textures marked shared. */
+function disposeGroup(root, all = false) {
   root.traverse(o => {
-    if (o.geometry) o.geometry.dispose();
-    if (o.material) { const ms = Array.isArray(o.material) ? o.material : [o.material]; for (const m of ms) { if (m.map && !m.userData.shared) m.map.dispose(); m.dispose(); } }
+    if (o.geometry && (all || !o.geometry.userData.shared)) o.geometry.dispose();
+    if (o.material) {
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of ms) {
+        if (!all && m.userData.shared) continue;
+        if (m.map && (all || !m.map.userData.shared)) m.map.dispose();
+        m.dispose();
+      }
+    }
   });
 }
 

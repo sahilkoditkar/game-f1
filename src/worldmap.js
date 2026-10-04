@@ -2,6 +2,7 @@
 // and the full-screen pan/zoom map screen with GPS waypoints and fast travel.
 import { fbm, smoothstep, mulberry32, coastDist, coastline, coastPointAt } from './world.js';
 import { WORLD_HALF, REGIONS, CITY, COAST } from './worlddef.js';
+import { PROP_MAP_COLORS } from './props.js';
 
 /** The terrain layer covers the whole island, its headlands and a margin of sea. */
 export const MAP_EXTENT = WORLD_HALF + 600;
@@ -157,6 +158,25 @@ function traceRoad(ctx, world, road, stride, view) {
   };
   for (let li = 0; li < last; li += stride) visit(li);
   visit(last);
+}
+
+/** Roofs of the roadside buildings, through a world→screen transform already set on ctx. */
+export function drawPropFootprints(ctx, props, view, scale) {
+  for (const p of props) {
+    if (!p.map) continue;
+    if (p.x < view.x0 - 30 || p.x > view.x1 + 30 || p.z < view.z0 - 30 || p.z > view.z1 + 30) continue;
+    ctx.fillStyle = PROP_MAP_COLORS[p.kind](p);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 1 / scale;
+    if (p.kind === 'silo' || p.kind === 'watertower') {
+      ctx.beginPath(); ctx.arc(p.x, p.z, p.w / 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      continue;
+    }
+    ctx.save();
+    ctx.translate(p.x, p.z); ctx.rotate(-p.rot);
+    ctx.fillRect(-p.w / 2, -p.d / 2, p.w, p.d);
+    ctx.strokeRect(-p.w / 2, -p.d / 2, p.w, p.d);
+    ctx.restore();
+  }
 }
 
 /** Draw a route polyline (world coordinates; transform already set). */
@@ -699,6 +719,8 @@ export class WorldMap {
       if (s > 0.5) { ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1 / s; ctx.strokeRect(-b.hw, -b.hd, b.w, b.d); }
       ctx.restore();
     }
+    // farms, villages, cabins, gas stations… once zoomed in enough to make them out
+    if (s > 0.14) drawPropFootprints(ctx, W.props, view, s);
     const stride = Math.max(1, Math.min(8, Math.round(1.5 / (s * W.spacing))));
     strokeRoads(ctx, W, s, { stride, view, widthBoost: s < 0.25 ? 1.6 : 1 });
     if (this.hz.routeIdx && this.hz.routeIdx.length > 1) strokeRoute(ctx, W, this.hz.routeIdx, s, Math.max(4, Math.min(9, 12 * s + 3)));
