@@ -239,13 +239,16 @@ class App {
 
   closeMap() {
     this.ui.mapOpen = false;
+    // the key that closed the map must not reopen it on the next frame
+    for (const k of ['KeyM', 'Tab']) this.input.pressed.delete(k);
     if (!this.horizon) return;
+    this.horizon.requestMap = false;
     this.paused = false;
     this.horizon.setPaused(false);
     this.ui.hide();
   }
 
-  setWaypoint(marker) { if (this.horizon) this.horizon.waypoint = marker; }
+  setWaypoint(marker) { if (this.horizon) this.horizon.setWaypoint(marker); }
 
   fastTravel(marker) {
     if (!this.horizon) return;

@@ -48,6 +48,7 @@ export class Horizon {
     this.time = 0;
     this.paused = false; this.suspended = false;
     this.waypoint = null;
+    this.route = null; this.routeIdx = null; this.routeTimer = 0;
     this.prompt = null;
     this.promptCooldown = 0;
     this.requestMap = false;
@@ -382,37 +383,27 @@ export class Horizon {
 
   _buildCityLots(chunk, x0, z0) {
     const W = this.world;
-    const lots = 3, pad = 13;
-    const lotW = (CITY.step - pad * 2) / lots;
     if (!this.facadeMats) {
       this.facadeMats = [0x9aa4b4, 0x6f8aa8, 0xb9ad98, 0x7c7f88].map(c => new THREE.MeshStandardMaterial({ map: makeFacadeTexture(c), roughness: 0.55, metalness: 0.15 }));
       this.roofMat = new THREE.MeshStandardMaterial({ color: 0x4a4d55, roughness: 1 });
     }
-    for (let bi = 0; bi < 5; bi++) for (let bj = 0; bj < 5; bj++) {
-      const bx0 = CITY.x0 + bi * CITY.step + pad, bz0 = CITY.z0 + bj * CITY.step + pad;
-      for (let li = 0; li < lots; li++) for (let lj = 0; lj < lots; lj++) {
-        const lx = bx0 + (li + 0.5) * lotW, lz = bz0 + (lj + 0.5) * lotW;
-        if (Math.abs(lx - x0) > CHUNK / 2 || Math.abs(lz - z0) > CHUNK / 2) continue;
-        const rand = mulberry32((bi * 5 + bj) * 9 + li * 3 + lj + 777);
-        if (rand() < 0.14) continue;   // a car park / plaza
-        const w = lotW * (0.55 + rand() * 0.35), d = lotW * (0.55 + rand() * 0.35);
-        const dc = Math.hypot(lx - 1900, lz - 1900);
-        const h = dc < 230 ? 45 + rand() * 90 : dc < 420 ? 18 + rand() * 42 : 9 + rand() * 18;
-        const geo = new THREE.BoxGeometry(w, h, d);
-        const uv = geo.attributes.uv;
-        for (let v = 0; v < uv.count; v++) {
-          const face = Math.floor(v / 4);
-          const su = face < 2 ? d : face < 4 ? w : w, sv = face < 2 ? h : face < 4 ? d : h;
-          uv.setXY(v, uv.getX(v) * su / 4, uv.getY(v) * sv / 3.6);
-        }
-        const facade = this.facadeMats[Math.floor(rand() * this.facadeMats.length)];
-        const m = new THREE.Mesh(geo, [facade, facade, this.roofMat, this.roofMat, facade, facade]);
-        const gy = W.terrainHeight(lx, lz);
-        m.position.set(lx, gy + h / 2 - 0.4, lz);
-        m.receiveShadow = true;
-        chunk.group.add(m);
-        chunk.buildings.push({ x: lx, z: lz, hw: w / 2, hd: d / 2 });
+    for (const b of W.buildings) {
+      if (Math.abs(b.x - x0) > CHUNK / 2 || Math.abs(b.z - z0) > CHUNK / 2) continue;
+      const { w, d, h } = b;
+      const geo = new THREE.BoxGeometry(w, h, d);
+      const uv = geo.attributes.uv;
+      for (let v = 0; v < uv.count; v++) {
+        const face = Math.floor(v / 4);
+        const su = face < 2 ? d : face < 4 ? w : w, sv = face < 2 ? h : face < 4 ? d : h;
+        uv.setXY(v, uv.getX(v) * su / 4, uv.getY(v) * sv / 3.6);
       }
+      const facade = this.facadeMats[Math.floor(b.mat * this.facadeMats.length)];
+      const m = new THREE.Mesh(geo, [facade, facade, this.roofMat, this.roofMat, facade, facade]);
+      const gy = W.terrainHeight(b.x, b.z);
+      m.position.set(b.x, gy + h / 2 - 0.4, b.z);
+      m.receiveShadow = true;
+      chunk.group.add(m);
+      chunk.buildings.push(b);
     }
   }
 
@@ -444,6 +435,7 @@ export class Horizon {
   /** Fast travel to a marker. */
   teleportTo(marker) {
     this.placeAt(marker.idx, 4);
+    this._updateRoute();
     this.endDrift(true); this.zone = null;
     this._streamChunks(true);
     snapChaseCamera(this.camera, this.car, this.tmp2);
@@ -487,6 +479,8 @@ export class Horizon {
     this._updateZones(car, prevIdx, dt);
     this._updateBoards(car);
     this._updateMarkers(car);
+    this.routeTimer = (this.routeTimer || 0) - dt;
+    if (this.waypoint && this.routeTimer <= 0) { this.routeTimer = 0.4; this._updateRoute(); }
 
     // Effects, camera, sound
     this.fx.setViewport(this.viewport.h, this.camera.fov);
@@ -701,7 +695,7 @@ export class Horizon {
     }
     if (this.waypoint) {
       const d = Math.hypot(car.pos.x - this.waypoint.x, car.pos.z - this.waypoint.z);
-      if (d < 35) { this.hud.toast(`Arrived: ${this.waypoint.name}`); this.waypoint = null; }
+      if (d < 35) { this.hud.toast(`Arrived: ${this.waypoint.kind === 'custom' ? 'waypoint' : this.waypoint.name}`); this.setWaypoint(null); }
     }
   }
 
@@ -735,64 +729,43 @@ export class Horizon {
     this.onSave();
   }
 
-  // ------------------------------------------------------------ Map rendering (for the UI)
-  /** Draw the whole world into a canvas; the static layer is cached. */
-  drawMap(canvas, selected = null) {
-    const size = canvas.width;
-    const W = this.world;
-    const sc = size / (WORLD_HALF * 2);
-    const X = (x) => (x + WORLD_HALF) * sc, Z = (z) => (z + WORLD_HALF) * sc;
-    if (!this.mapLayer || this.mapLayer.width !== size) {
-      const off = document.createElement('canvas'); off.width = off.height = size;
-      const c = off.getContext('2d');
-      const tint = { grass: '#4b7d3a', forest: '#2f5f2c', desert: '#c9a36b', alpine: '#b9c3cc', city: '#6b6e76', coast: '#5f9450' };
-      const cells = 96, cs = size / cells;
-      for (let i = 0; i < cells; i++) for (let j = 0; j < cells; j++) {
-        const x = -WORLD_HALF + (i + 0.5) * (WORLD_HALF * 2 / cells), z = -WORLD_HALF + (j + 0.5) * (WORLD_HALF * 2 / cells);
-        c.fillStyle = z > SEA_Z ? '#2a6fb0' : (z > SEA_Z - 120 ? '#d9c795' : tint[W.regionAt(x, z).id]);
-        c.fillRect(i * cs - 0.5, j * cs - 0.5, cs + 1, cs + 1);
-      }
-      c.lineCap = 'round'; c.lineJoin = 'round';
-      for (const road of W.roads) {
-        const wpx = { highway: 4.2, road: 3, lane: 2.2, dirt: 2, street: 2 }[road.kind] * (size / 640);
-        c.beginPath();
-        for (let li = 0; li < road.n; li += 3) { const s = W.samples[road.i0 + li]; if (li === 0) c.moveTo(X(s.p.x), Z(s.p.z)); else c.lineTo(X(s.p.x), Z(s.p.z)); }
-        if (road.closed) c.closePath();
-        c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = wpx + 2; c.stroke();
-        c.strokeStyle = road.kind === 'dirt' ? '#c9ad7a' : road.kind === 'highway' ? '#f4f4f4' : '#dcdcdc'; c.lineWidth = wpx; c.stroke();
-      }
-      this.mapLayer = off;
-    }
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, size, size);
-    ctx.drawImage(this.mapLayer, 0, 0);
-    const k = size / 640;
-    for (const b of W.boards) {
-      if (this.prog.boards.includes(b.id)) continue;
-      ctx.fillStyle = '#3ddc84'; ctx.fillRect(X(b.x) - 2.5 * k, Z(b.z) - 2.5 * k, 5 * k, 5 * k);
-    }
-    for (const m of W.markers) drawMarkerIcon(ctx, X(m.x), Z(m.z), m, this, selected === m, k);
-    if (this.waypoint) {
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 * k; ctx.setLineDash([4 * k, 4 * k]);
-      ctx.beginPath(); ctx.moveTo(X(this.car.pos.x), Z(this.car.pos.z)); ctx.lineTo(X(this.waypoint.x), Z(this.waypoint.z)); ctx.stroke(); ctx.setLineDash([]);
-    }
-    // player
-    const px = X(this.car.pos.x), pz = Z(this.car.pos.z);
-    ctx.save(); ctx.translate(px, pz); ctx.rotate(this.car.heading + Math.PI);
-    ctx.fillStyle = '#ff5a1f'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 * k;
-    ctx.beginPath(); ctx.moveTo(0, -9 * k); ctx.lineTo(6 * k, 7 * k); ctx.lineTo(0, 3 * k); ctx.lineTo(-6 * k, 7 * k); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.restore();
+  // ------------------------------------------------------------ GPS
+  setWaypoint(marker) {
+    this.waypoint = marker || null;
+    this.routeTimer = 0;
+    this._updateRoute();
   }
 
-  /** Marker closest to a canvas point (within 16 px), or null. */
-  markerAt(canvas, px, py) {
-    const size = canvas.width, sc = size / (WORLD_HALF * 2);
-    let best = null, bd = 16 * (size / 640);
-    for (const m of this.world.markers) {
-      const d = Math.hypot((m.x + WORLD_HALF) * sc - px, (m.z + WORLD_HALF) * sc - py);
-      if (d < bd) { bd = d; best = m; }
-    }
-    return best;
+  _updateRoute() {
+    const wp = this.waypoint;
+    if (!wp || wp.idx === undefined) { this.route = null; this.routeIdx = null; return; }
+    this.route = this.world.route(this.car.trackIdx, wp.idx);
+    this.routeIdx = this.world.routeIndices(this.route, 2);
+  }
+
+  /**
+   * The next instruction on the route: { text, dist (m), turn: left|right|ahead|back|arrive }.
+   */
+  routeGuide() {
+    const r = this.route, W = this.world, car = this.car;
+    if (!r || !r.legs.length) return null;
+    const legs = r.legs, l0 = legs[0], road0 = W.roads[l0.road];
+    // driving the wrong way along the first leg?
+    const s0 = W.samples[W.roadWrap(road0, road0.i0 + l0.from, true)];
+    const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
+    const along = (s0.t.x * fx + s0.t.z * fz) * l0.dir;
+    if (along < -0.3 && r.length > 60) return { text: 'Turn around', dist: 0, turn: 'back' };
+    if (legs.length === 1) return { text: r.length < 120 ? 'Arriving' : `Follow ${road0.name}`, dist: r.length, turn: r.length < 120 ? 'arrive' : 'ahead' };
+    const l1 = legs[1], road1 = W.roads[l1.road];
+    const hAt = (road, li, dir) => { const s = W.samples[W.roadWrap(road, road.i0 + li, true)]; return s.heading + (dir < 0 ? Math.PI : 0); };
+    const h0 = hAt(road0, l0.from + l0.dir * Math.max(0, l0.len - 6), l0.dir);
+    const h1 = hAt(road1, l1.from + l1.dir * Math.min(l1.len, 8), l1.dir);
+    let d = h1 - h0;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    const turn = Math.abs(d) < 0.35 ? 'ahead' : d < 0 ? 'right' : 'left';
+    const text = turn === 'ahead' ? `Continue onto ${road1.name}` : `Turn ${turn} onto ${road1.name}`;
+    return { text, dist: l0.len * W.spacing, turn };
   }
 
   render() {
@@ -965,32 +938,6 @@ function makeFacadeTexture(baseHex) {
   t.colorSpace = THREE.SRGBColorSpace;
   t.userData.shared = true;
   return t;
-}
-
-/** Map icon for a marker. */
-export function drawMarkerIcon(ctx, x, y, m, hz, selected, k = 1) {
-  const done = m.kind === 'event' ? !!hz.prog.events[m.id] : (m.kind === 'hub' ? false : hz._stars((hz.prog[m.kind + 's'] || {})[m.id] || 0, m.stars) === 3);
-  ctx.save();
-  ctx.translate(x, y);
-  if (selected) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 * k; ctx.beginPath(); ctx.arc(0, 0, 13 * k, 0, Math.PI * 2); ctx.stroke(); }
-  ctx.lineWidth = 1.5 * k; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-  if (m.kind === 'hub') {
-    ctx.fillStyle = '#ffd23f';
-    ctx.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 4.5 * k : 10 * k, a = -Math.PI / 2 + i * Math.PI / 5; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); } ctx.closePath(); ctx.fill(); ctx.stroke();
-  } else if (m.kind === 'event') {
-    ctx.fillStyle = done ? '#9a6a3a' : (m.track.kind === 'stage' ? '#3ddc84' : '#ff5a1f');
-    ctx.beginPath(); ctx.arc(0, 0, 8 * k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.fillRect(-1 * k, -5 * k, 1.6 * k, 10 * k); ctx.beginPath(); ctx.moveTo(0, -5 * k); ctx.lineTo(5 * k, -2.5 * k); ctx.lineTo(0, 0); ctx.fill();
-  } else if (m.kind === 'trap') {
-    ctx.fillStyle = done ? '#5a7a99' : '#2f7bff'; ctx.fillRect(-6 * k, -6 * k, 12 * k, 12 * k); ctx.strokeRect(-6 * k, -6 * k, 12 * k, 12 * k);
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, 2.6 * k, 0, Math.PI * 2); ctx.fill();
-  } else if (m.kind === 'drift') {
-    ctx.fillStyle = done ? '#7a5a99' : '#b04cff'; ctx.beginPath(); ctx.moveTo(0, -8 * k); ctx.lineTo(8 * k, 0); ctx.lineTo(0, 8 * k); ctx.lineTo(-8 * k, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
-  } else if (m.kind === 'zone') {
-    ctx.fillStyle = done ? '#4a8a92' : '#00d4ff'; ctx.beginPath(); ctx.roundRect(-8 * k, -5 * k, 16 * k, 10 * k, 3 * k); ctx.fill(); ctx.stroke();
-  }
-  if (done) { ctx.fillStyle = '#fff'; ctx.font = `${10 * k}px Arial`; ctx.textAlign = 'center'; ctx.fillText('✓', 0, 3.5 * k); }
-  ctx.restore();
 }
 
 export { REGIONS };

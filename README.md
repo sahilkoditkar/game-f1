@@ -8,12 +8,18 @@ hosted directly on GitHub Pages (or any static host).
 
 - **Free Roam open world** (new): a 6 km square map streamed in chunks around you, with six regions:
   Meadowvale farmland, Pinewood Hills forest, Red Mesa Flats desert, the Frostpeak alpine pass, the Azure
-  Shore coastline and Apex City with a grid of streets and towers. Twenty-three roads from a four-lane
-  highway ring down to gravel trails, with junctions, elevation and a shoreline. Every circuit and stage
+  Shore coastline and Apex City with a grid of streets and towers. Twenty-eight roads from a four-lane
+  highway ring down to gravel trails, all joined into one network: every road meets another at a real
+  junction, with elevation and a shoreline. Every circuit and stage
   is placed in the world as a drive-up event: roll onto its ring and press Enter to race it against
   Dynamic AI, with prize money and XP. Ten speed traps, six drift zones, four speed zones and forty bonus
-  boards give star ratings and XP; levels pay out credits. A full map (M) shows roads, regions and
-  markers, sets waypoints and fast-travels to places you have discovered. Your position and all progress
+  boards give star ratings and XP; levels pay out credits. The full-screen map (M) works like the ones
+  in Forza Horizon or GTA: shaded terrain, city blocks, road and region names, drag to pan and scroll or
+  pinch to zoom, filters per marker type, and a waypoint on any marker or any point on a road. The GPS
+  plans the shortest route along the roads and draws it in purple on the map and on the radar, and the
+  HUD gives turn-by-turn directions ("Turn right onto Meridian Road · 240 m"). The radar is heading-up,
+  shows terrain, road classes and traffic, and zooms out with speed. Fast travel goes to any place you
+  have discovered. Your position and all progress
   save in the browser. Ambient traffic drives the network in its lane, slows for corners, queues behind
   you, turns at junctions and can be hit (or passed closely for a near-miss XP bonus).
 

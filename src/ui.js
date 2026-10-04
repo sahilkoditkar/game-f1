@@ -3,6 +3,7 @@ import { CARS, SERIES, UPGRADES, PLAYER_COLORS, getCar, getSeries, upgradeCost, 
 import { listControls, getControl, connectedPads, gamepadDiagnostics } from './input.js';
 import { seriesState, isSeriesUnlocked, standings, canBuyUpgrade } from './career.js';
 import { fmtTime } from './race.js';
+import { WorldMap } from './worldmap.js';
 
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const money = (n) => `${Math.round(n).toLocaleString()} cr`;
@@ -23,10 +24,14 @@ export class UI {
     });
   }
 
-  hide() { this.el.innerHTML = ''; this.el.classList.add('empty'); this.rerender = null; this.mapOpen = false; }
+  hide() {
+    if (this.worldMap) { this.worldMap.dispose(); this.worldMap = null; }
+    this.el.innerHTML = ''; this.el.classList.add('empty'); this.el.classList.remove('fullbleed'); this.rerender = null; this.mapOpen = false;
+  }
 
   show(html, { transparent = false } = {}) {
-    this.el.classList.remove('empty');
+    if (this.worldMap) { this.worldMap.dispose(); this.worldMap = null; }
+    this.el.classList.remove('empty', 'fullbleed');
     this.el.classList.toggle('transparent', transparent);
     this.el.innerHTML = html;
     this.el.querySelectorAll('button').forEach(b => b.addEventListener('click', () => this.app.audio.click()));
@@ -413,69 +418,19 @@ export class UI {
     setTimeout(() => this.app.startHorizon(), 40);
   }
 
-  /** Full-world map: waypoints, fast travel and progress. */
+  /** Full-screen world map: pan/zoom, GPS waypoints, fast travel and progress. */
   horizonMap(fromPause = false) {
     const app = this.app, hz = app.horizon;
     if (!hz) return;
+    if (this.worldMap) this.worldMap.dispose();
     this.mapOpen = true;
     this.rerender = null;
-    const sum = hz.summary();
-    const size = Math.max(420, Math.min(640, Math.floor(Math.min(window.innerWidth - 80, window.innerHeight - 120))));
-    let selected = hz.waypoint || null;
-    const stars = (a, b) => `${a}<span class="meta">/${b}</span> ★`;
-    this.show(`
-      <div class="panel" style="width:min(1060px,100%)">
-        <div class="row between"><h2 style="margin:0">Map</h2><div class="meta">${sum.level.level > 1 ? `Level ${sum.level.level}` : 'Level 1'} · ${sum.xp.toLocaleString()} XP · ${money(sum.money)}</div><button class="small ghost" data-close>${fromPause ? '← Back' : 'Close (Esc / M)'}</button></div>
-        <div class="row" style="align-items:flex-start;margin-top:12px;gap:18px">
-          <canvas id="hz-map" width="${size}" height="${size}" style="border-radius:12px;cursor:crosshair;max-width:100%"></canvas>
-          <div style="flex:1;min-width:240px">
-            <div class="card" id="hz-sel"></div>
-            <h3>Progress</h3>
-            <div class="card hz-stats">
-              <div><span>Events raced</span><b>${sum.events}<span class="meta">/${sum.eventsTotal}</span></b></div>
-              <div><span>Speed traps</span><b>${stars(sum.trapStars, sum.trapTotal)}</b></div>
-              <div><span>Drift zones</span><b>${stars(sum.driftStars, sum.driftTotal)}</b></div>
-              <div><span>Speed zones</span><b>${stars(sum.zoneStars, sum.zoneTotal)}</b></div>
-              <div><span>Bonus boards</span><b>${sum.boards}<span class="meta">/${sum.boardsTotal}</span></b></div>
-              <div><span>Discovered</span><b>${sum.discovered}<span class="meta">/${sum.markers}</span></b></div>
-              <div><span>Distance driven</span><b>${sum.distance.toFixed(1)} km</b></div>
-            </div>
-            <div class="hz-legend meta">
-              <span><i style="background:#ffd23f"></i>Festival</span><span><i style="background:#ff5a1f"></i>Circuit</span><span><i style="background:#3ddc84"></i>Stage / board</span>
-              <span><i style="background:#2f7bff"></i>Speed trap</span><span><i style="background:#b04cff"></i>Drift zone</span><span><i style="background:#00d4ff"></i>Speed zone</span>
-            </div>
-          </div>
-        </div>
-      </div>`);
-    const canvas = document.getElementById('hz-map');
-    const selBox = document.getElementById('hz-sel');
-    const renderSel = () => {
-      if (!selected) { selBox.innerHTML = '<div class="meta">Click a marker for details, a waypoint, or fast travel (once discovered).</div>'; return; }
-      const m = selected;
-      const discovered = m.kind === 'hub' || hz.prog.discovered.includes(m.id);
-      const kindName = { hub: 'Festival hub', event: m.track ? (m.track.kind === 'stage' ? 'Point-to-point stage' : 'Circuit race') : 'Event', trap: 'Speed trap', drift: 'Drift zone', zone: 'Speed zone' }[m.kind];
-      const d = Math.hypot(m.x - hz.car.pos.x, m.z - hz.car.pos.z);
-      selBox.innerHTML = `
-        <h4>${m.name}</h4>
-        <div class="meta">${kindName}${m.track ? ` · ${m.track.desc}` : ''}</div>
-        <div class="meta" style="margin-top:6px">${hz.world.regionAt(m.x, m.z).name} · ${d >= 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d) + ' m'} away${m.kind === 'event' ? ` · ${m.track.open ? 'stage' : m.laps + ' laps'} · ${m.ai} rivals` : ''}</div>
-        <div style="margin-top:6px">${hz.markerBest(m)}</div>
-        <div class="row" style="margin-top:10px">
-          <button class="small primary" data-wp>${hz.waypoint === m ? 'Clear waypoint' : 'Set waypoint'}</button>
-          <button class="small" data-travel ${discovered ? '' : 'disabled title="Drive there first to unlock fast travel"'}>Fast travel</button>
-        </div>`;
-      selBox.querySelector('[data-wp]').addEventListener('click', () => { app.setWaypoint(hz.waypoint === m ? null : m); app.audio.click(); renderSel(); draw(); });
-      selBox.querySelector('[data-travel]').addEventListener('click', () => { if (discovered) { app.audio.click(); app.fastTravel(m); } });
-    };
-    const draw = () => hz.drawMap(canvas, selected);
-    canvas.addEventListener('click', (e) => {
-      const r = canvas.getBoundingClientRect();
-      const px = (e.clientX - r.left) * (canvas.width / r.width), py = (e.clientY - r.top) * (canvas.height / r.height);
-      const m = hz.markerAt(canvas, px, py);
-      if (m) { selected = m; app.audio.click(); renderSel(); draw(); }
+    this.show('', { transparent: true });
+    this.el.classList.add('fullbleed');
+    this.worldMap = new WorldMap(this.el, {
+      hz, app, fromPause,
+      onClose: () => { this.worldMap = null; if (fromPause) { this.mapOpen = false; this.el.classList.remove('fullbleed'); this.pause(); } else app.closeMap(); },
     });
-    renderSel(); draw();
-    this.on('[data-close]', 'click', () => { if (fromPause) { this.mapOpen = false; this.pause(); } else app.closeMap(); });
   }
 
   // ------------------------------------------------------------ Results

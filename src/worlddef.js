@@ -11,12 +11,12 @@ export const SEA_LEVEL = -7;
 
 /** Regions blend by distance from a centre; `grass` is whatever is left over. */
 export const REGIONS = [
-  { id: 'alpine', name: 'Frostpeak Pass', cx: 0, cz: -2700, r: 1000, soft: 800 },
+  { id: 'alpine', name: 'Frostpeak Pass', cx: 0, cz: -2700, r: 1000, soft: 800, lx: 750, lz: -2560 },
   { id: 'forest', name: 'Pinewood Hills', cx: -1900, cz: -1200, r: 950, soft: 650 },
-  { id: 'desert', name: 'Red Mesa Flats', cx: 2250, cz: -600, r: 950, soft: 650 },
-  { id: 'city', name: 'Apex City', cx: 1900, cz: 1900, r: 560, soft: 260 },
-  { id: 'coast', name: 'Azure Shore' },   // z-based, see World.regionWeights
-  { id: 'grass', name: 'Meadowvale' },
+  { id: 'desert', name: 'Red Mesa Flats', cx: 2250, cz: -600, r: 950, soft: 650, lx: 2330, lz: -960 },
+  { id: 'city', name: 'Apex City', cx: 1912, cz: 1712, r: 560, soft: 260, lx: 1912, lz: 1190 },
+  { id: 'coast', name: 'Azure Shore', lx: -1500, lz: 2700 },   // z-based, see World.regionWeights
+  { id: 'grass', name: 'Meadowvale', lx: -700, lz: 1450 },
 ];
 
 const RING_R = 1750;
@@ -31,9 +31,9 @@ function ring(n = 20) {
 }
 
 // City grid helpers
-const CITY_X0 = 1500, CITY_Z0 = 1450, CITY_STEP = 165, CITY_N = 6;
+const CITY_X0 = 1500, CITY_Z0 = 1300, CITY_STEP = 165, CITY_N = 6;
 const CITY_X1 = CITY_X0 + CITY_STEP * (CITY_N - 1), CITY_Z1 = CITY_Z0 + CITY_STEP * (CITY_N - 1);
-export const CITY = { x0: CITY_X0, z0: CITY_Z0, x1: CITY_X1, z1: CITY_Z1, step: CITY_STEP };
+export const CITY = { x0: CITY_X0, z0: CITY_Z0, x1: CITY_X1, z1: CITY_Z1, step: CITY_STEP, cx: (CITY_X0 + CITY_X1) / 2, cz: (CITY_Z0 + CITY_Z1) / 2 };
 
 function cityStreets() {
   const out = [];
@@ -42,13 +42,12 @@ function cityStreets() {
     const z = CITY_Z0 + i * CITY_STEP;
     // north-south street i (the middle one runs on south to the coast highway)
     const ns = [[x, CITY_Z0 - 30], [x, CITY_Z0], [x, (CITY_Z0 + CITY_Z1) / 2], [x, CITY_Z1]];
-    if (i === 2) ns.push([x, CITY_Z1 + 200], [x - 40, 2290]);   // on to the coast highway
+    if (i === 2) ns.push([x, CITY_Z1 + 90], [x - 10, 2300]);   // on to the coast highway
     else ns.push([x, CITY_Z1 + 30]);
-    if (i === 0) ns.unshift([1500, 1150], [1430, 1000]);       // up to the ring road
     out.push({ id: `st-ns${i}`, name: ['Harbour St', 'Festival Ave', 'Apex Blvd', 'Neon Row', 'Dock Lane', 'Skyline Dr'][i], kind: 'street', width: 13, points: ns });
     // east-west street i (the first one is the avenue in from the ring road)
     const ew = [[CITY_X0 - 30, z], [CITY_X0, z], [(CITY_X0 + CITY_X1) / 2, z], [CITY_X1, z], [CITY_X1 + 30, z]];
-    if (i === 0) ew.unshift([1150, 1320], [1330, 1420]);
+    if (i === 0) ew.splice(0, 1, [1262, 1290], [1420, 1300]);
     out.push({ id: `st-ew${i}`, name: ['Grand Avenue', 'Market St', 'Union St', 'Pier Rd', 'Beacon St', 'Cannery Row'][i], kind: 'street', width: 13, points: ew });
   }
   return out;
@@ -68,18 +67,31 @@ export const ROADS = [
     points: [[-2950, 150], [-2300, 320], [-1750, 180], [-1200, 100], [-400, -100], [400, 200], [1200, 50], [1750, -150], [2300, -250], [2950, -50]] },
   { id: 'trail', name: 'Pinewood Trail', kind: 'dirt', width: 9,
     points: [[-2500, -2300], [-2250, -2050], [-2000, -1700], [-1700, -1900], [-1500, -1550], [-1250, -1350], [-1400, -950], [-1100, -650], [-900, -350], [-760, -120], [-700, 180]] },
+  { id: 'canyongate', name: 'Canyon Gate Road', kind: 'road', width: 14,
+    points: [[2000, -195], [2045, -310], [2080, -420]] },
   { id: 'pass', name: 'Frostpeak Pass', kind: 'lane', width: 10,
-    points: [[-700, -1800], [-420, -2050], [-800, -2250], [-380, -2450], [-760, -2650], [-350, -2780], [-120, -2700]] },
+    points: [[-700, -1800], [-760, -2020], [-430, -2090], [-800, -2250], [-380, -2450], [-760, -2650], [-350, -2780], [-120, -2700]] },
   { id: 'canyon', name: 'Canyon Loop', kind: 'road', width: 14, closed: true,
-    points: [[1750, -200], [2200, -600], [2650, -450], [2850, -950], [2550, -1350], [2050, -1500], [1800, -1150], [1600, -700]] },
+    points: [[2080, -420], [2350, -650], [2700, -450], [2850, -950], [2550, -1350], [2050, -1500], [1950, -1150], [1900, -700]] },
   { id: 'farm1', name: 'Orchard Lane', kind: 'lane', width: 11,
     points: [[-1400, 1060], [-1200, 980], [-800, 1120], [-300, 820], [100, 900]] },
   { id: 'farm2', name: 'Millbrook Lane', kind: 'lane', width: 11,
     points: [[-1760, -20], [-1420, 560], [-1120, 1280], [-900, 1800], [-700, 2320]] },
   { id: 'hilltop', name: 'Ridge Road', kind: 'lane', width: 10,
-    points: [[880, -1520], [620, -1120], [900, -720], [1300, -520], [1750, -200]] },
+    points: [[880, -1520], [620, -1120], [900, -720], [1250, -450], [1450, -45]] },
   { id: 'dunes', name: 'Dune Track', kind: 'dirt', width: 10,
     points: [[2300, -250], [2500, 200], [2850, 450], [2700, 850], [2350, 1100], [2500, 1500], [2750, 1900], [2800, 2260]] },
+  // a long country lane down the west side: coast → farmland → forest → over to the pass
+  { id: 'timber', name: 'Timberline Road', kind: 'lane', width: 10,
+    points: [[-2400, 2262], [-2600, 1700], [-2250, 1150], [-2500, 650], [-2580, 250], [-2650, -400], [-2550, -1100], [-2720, -1700],
+      [-2500, -2300], [-2150, -2560], [-1650, -2620], [-1250, -2420], [-800, -2250]] },
+  // over the top of the map from the mountains to the desert
+  { id: 'mesa', name: 'Mesa Road', kind: 'road', width: 14,
+    points: [[100, -2150], [600, -2250], [1200, -2150], [1800, -1950], [2300, -1700], [2550, -1350]] },
+  { id: 'sunflower', name: 'Sunflower Lane', kind: 'lane', width: 11,
+    points: [[180, 1300], [600, 1150], [950, 800], [1250, 700], [1500, 840]] },
+  { id: 'quarry', name: 'Quarry Track', kind: 'dirt', width: 9,
+    points: [[-85, -500], [-450, -650], [-800, -1000], [-1250, -1350]] },
   ...cityStreets(),
 ];
 

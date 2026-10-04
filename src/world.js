@@ -54,6 +54,8 @@ export class World {
     this._buildGrid();
     this._reconcileJunctions();
     this._finishSamples();
+    this._buildGraph();
+    this._buildCity();
     this._placeItems();
   }
 
@@ -211,6 +213,7 @@ export class World {
   _reconcileJunctions() {
     const pairs = [];
     const lastHit = new Map();
+    const d2 = (a, b) => (a.p.x - b.p.x) ** 2 + (a.p.z - b.p.z) ** 2;
     for (let i = 0; i < this.samples.length; i++) {
       const s = this.samples[i];
       const cx = Math.floor(s.p.x / this.cell), cz = Math.floor(s.p.z / this.cell);
@@ -220,19 +223,31 @@ export class World {
         for (const j of list) {
           const o = this.samples[j];
           if (o.road <= s.road) continue;
-          if (s.p.distanceToSquared(o.p) > 36) continue;
+          // plan distance only: the heights have not been matched yet, so a road coming
+          // off a hillside can meet another several metres above or below it
+          if (d2(s, o) > 36) continue;
           const key = `${s.road}:${o.road}`;
           const last = lastHit.get(key);
           if (last !== undefined && Math.abs(last - i) < 60) continue;
           lastHit.set(key, i);
-          pairs.push([i, j]);
+          // the first pair within 6 m is not the crossing itself: walk both roads to the closest pair
+          const ra = this.roads[s.road], rb = this.roads[o.road];
+          let bi = i, bj = j, bd = d2(s, o);
+          for (let a = -8; a <= 8; a++) for (let b = -8; b <= 8; b++) {
+            const ii = this.roadWrap(ra, i + a), jj = this.roadWrap(rb, j + b);
+            if (ii < 0 || jj < 0) continue;
+            const d = d2(this.samples[ii], this.samples[jj]);
+            if (d < bd) { bd = d; bi = ii; bj = jj; }
+          }
+          pairs.push([bi, bj]);
         }
       }
     }
-    // The bigger road keeps its height; the smaller one blends onto it over 100 m.
+    // The bigger road keeps its height; the smaller one blends onto it. The blend is
+    // at least 100 m and long enough to keep the extra grade under about 6%.
+    // Several passes: a blend at one junction moves the road under its neighbours too.
     const RANK = { highway: 4, road: 3, street: 2, lane: 1, dirt: 0 };
-    const R = 50;
-    for (const [i, j] of pairs) {
+    for (let pass = 0; pass < 4; pass++) for (const [i, j] of pairs) {
       const ra = this.roads[this.samples[i].road], rb = this.roads[this.samples[j].road];
       const rankA = RANK[ra.kind], rankB = RANK[rb.kind];
       const wA = rankA > rankB ? 1 : rankA < rankB ? 0 : 0.5;   // share of the final height taken from road A
@@ -241,6 +256,7 @@ export class World {
         const road = this.roads[this.samples[c].road];
         const delta = target - this.samples[c].p.y;
         if (Math.abs(delta) < 1e-4) continue;
+        const R = Math.min(400, Math.max(50, Math.ceil((Math.abs(delta) * 1.6) / (0.06 * SPACING))));
         for (let k = -R; k <= R; k++) {
           const idx = this.roadWrap(road, c + k);
           if (idx < 0) continue;
@@ -249,6 +265,7 @@ export class World {
         }
       }
     }
+    this._limitGrades(pairs, 0.10);
     this.junctionPairs = pairs;
     this.junctions = pairs.map(([i]) => i);
     // per-road lists for traffic: [{ li, other }] sorted along the road
@@ -258,6 +275,66 @@ export class World {
       this.roadJunctions[this.samples[j].road].push({ li: this.samples[j].li, other: i });
     }
     for (const list of this.roadJunctions) list.sort((a, b) => a.li - b.li);
+  }
+
+  /**
+   * Junction blends can stack up into steep ramps where crossings are close together
+   * or a road drops off a hillside onto a highway. Re-limit each road's grade with its
+   * junction heights pinned, so the crossings still meet exactly.
+   */
+  _limitGrades(pairs, grade) {
+    const pins = this.roads.map(() => new Map());
+    for (const [i, j] of pairs) for (const c of [i, j]) pins[this.samples[c].road].set(c - this.roads[this.samples[c].road].i0, this.samples[c].p.y);
+    const m = SPACING * grade;
+    this.roads.forEach((road, ri) => {
+      const P = pins[ri];
+      if (!P.size) return;
+      const N = road.n, h = new Float32Array(N);
+      for (let k = 0; k < N; k++) h[k] = this.samples[road.i0 + k].p.y;
+      const W = (k) => road.closed ? ((k % N) + N) % N : Math.max(0, Math.min(N - 1, k));
+      // Between two pins the grade may need to be steeper than the limit (a lane dropping
+      // from the mountain ring to the valley): then that stretch climbs at a steady grade.
+      const pinList = [...P.entries()].sort((a, b) => a[0] - b[0]);
+      const mk = new Float32Array(N).fill(m);
+      const cone = (k, y, d, mm) => [y - mm * d, y + mm * d];
+      const segs = [];
+      for (let q = 0; q < pinList.length - 1; q++) segs.push([pinList[q], pinList[q + 1], pinList[q + 1][0] - pinList[q][0]]);
+      if (road.closed) { const a = pinList[pinList.length - 1], b = pinList[0]; segs.push([a, b, b[0] + N - a[0]]); }
+      for (const [[ca, ya], [, yb], len] of segs) {
+        if (len <= 0) continue;
+        const mm = Math.max(m, (1.05 * Math.abs(yb - ya)) / len);
+        for (let t = 0; t <= len; t++) {
+          const k = W(ca + t);
+          mk[k] = Math.max(mk[k], mm);
+          const [l1, h1] = cone(k, ya, t, mm), [l2, h2] = cone(k, yb, len - t, mm);
+          h[k] = Math.min(Math.min(h1, h2), Math.max(Math.max(l1, l2), h[k]));
+        }
+      }
+      if (!road.closed) {
+        const [c0, y0] = pinList[0], [c1, y1] = pinList[pinList.length - 1];
+        for (let k = 0; k < c0; k++) { const [l, u] = cone(k, y0, c0 - k, m); h[k] = Math.min(u, Math.max(l, h[k])); }
+        for (let k = c1 + 1; k < N; k++) { const [l, u] = cone(k, y1, k - c1, m); h[k] = Math.min(u, Math.max(l, h[k])); }
+      }
+      // then clamp step by step both ways, never moving a pin
+      const passes = road.closed ? N * 2 : N - 1;
+      for (let rep = 0; rep < 2; rep++) {
+        for (let k = 0; k < passes; k++) {
+          const a = W(k), b = W(k + 1);
+          if (P.has(b)) continue;
+          const mm = Math.max(mk[a], mk[b]);
+          h[b] = Math.min(h[a] + mm, Math.max(h[a] - mm, h[b]));
+        }
+        for (let k = passes; k > 0; k--) {
+          const a = W(k), b = W(k - 1);
+          if (P.has(b)) continue;
+          const mm = Math.max(mk[a], mk[b]);
+          h[b] = Math.min(h[a] + mm, Math.max(h[a] - mm, h[b]));
+        }
+      }
+      smoothProfile(h, W, road.closed, 4);
+      for (const [c, y] of P) h[c] = y;
+      for (let k = 0; k < N; k++) this.samples[road.i0 + k].p.y = h[k];
+    });
   }
 
   _finishSamples() {
@@ -415,6 +492,147 @@ export class World {
   /** Is `idx` inside the sample range [i0, i1] of its road (ranges never wrap). */
   inRange(idx, i0, i1) { return idx >= i0 && idx <= i1; }
 
+  // ------------------------------------------------------------ Route finding (GPS)
+  /**
+   * Road graph for the GPS: a node at every junction and open road end, an edge for
+   * each stretch of road between two of them.
+   */
+  _buildGraph() {
+    const stops = this.roads.map(() => []);   // per road: [{ li, node }]
+    let nodes = 0;
+    for (const [i, j] of this.junctionPairs) {
+      const node = nodes++;
+      stops[this.samples[i].road].push({ li: this.samples[i].li, node });
+      stops[this.samples[j].road].push({ li: this.samples[j].li, node });
+    }
+    this.roads.forEach((road, ri) => {
+      if (road.closed) return;
+      const list = stops[ri];
+      if (!list.some(s => s.li <= 3)) list.push({ li: 0, node: nodes++ });
+      if (!list.some(s => s.li >= road.n - 4)) list.push({ li: road.n - 1, node: nodes++ });
+    });
+    this.adj = Array.from({ length: nodes }, () => []);
+    this.roadStops = stops.map(l => l.sort((a, b) => a.li - b.li));
+    this.roadStops.forEach((list, ri) => {
+      const road = this.roads[ri];
+      const link = (a, b, len) => {
+        this.adj[a.node].push({ to: b.node, cost: len * SPACING, road: ri, from: a.li, dir: 1, len });
+        this.adj[b.node].push({ to: a.node, cost: len * SPACING, road: ri, from: b.li, dir: -1, len });
+      };
+      for (let k = 0; k < list.length - 1; k++) link(list[k], list[k + 1], list[k + 1].li - list[k].li);
+      if (road.closed && list.length) link(list[list.length - 1], list[0], list[0].li + road.n - list[list.length - 1].li);
+    });
+  }
+
+  /** Stops either side of a point on a road, as [{ node, steps, dir }]. */
+  _neighbourStops(ri, li) {
+    const road = this.roads[ri], list = this.roadStops[ri];
+    if (!list.length) return [];
+    let k = list.findIndex(s => s.li > li);
+    if (road.closed) {
+      const after = list[k < 0 ? 0 : k], before = list[k < 0 ? list.length - 1 : (k - 1 + list.length) % list.length];
+      const fwd = ((after.li - li) % road.n + road.n) % road.n, back = ((li - before.li) % road.n + road.n) % road.n;
+      return [{ node: after.node, steps: fwd, dir: 1, li: after.li }, { node: before.node, steps: back, dir: -1, li: before.li }];
+    }
+    const out = [];
+    if (k < 0) k = list.length;
+    if (k < list.length) out.push({ node: list[k].node, steps: list[k].li - li, dir: 1, li: list[k].li });
+    if (k > 0) out.push({ node: list[k - 1].node, steps: li - list[k - 1].li, dir: -1, li: list[k - 1].li });
+    return out;
+  }
+
+  /**
+   * Shortest drive along the roads between two sample indices. Returns
+   * { length (m), legs: [{ road, from, dir, len }] } or null. A leg runs `len`
+   * samples from local index `from` in direction `dir` along `road`.
+   */
+  route(fromIdx, toIdx) {
+    const A = this.samples[fromIdx], B = this.samples[toIdx];
+    const ra = A.road, rb = B.road;
+    let best = null;
+    // the same road, straight there (either way round on a loop)
+    if (ra === rb) {
+      const road = this.roads[ra];
+      let d = B.li - A.li;
+      if (road.closed) { const f = ((d % road.n) + road.n) % road.n; d = f <= road.n - f ? f : f - road.n; }
+      best = { length: Math.abs(d) * SPACING, legs: [{ road: ra, from: A.li, dir: Math.sign(d) || 1, len: Math.abs(d) }] };
+    }
+    const starts = this._neighbourStops(ra, A.li), ends = this._neighbourStops(rb, B.li);
+    if (!starts.length || !ends.length) return best;
+    const n = this.adj.length;
+    const dist = new Float64Array(n).fill(Infinity), prev = new Array(n).fill(null);
+    const open = new Set();
+    for (const s of starts) {
+      const c = s.steps * SPACING;
+      if (c < dist[s.node]) { dist[s.node] = c; prev[s.node] = { start: s }; open.add(s.node); }
+    }
+    const endCost = new Map();
+    for (const e of ends) { const c = e.steps * SPACING; if (!endCost.has(e.node) || c < endCost.get(e.node).c) endCost.set(e.node, { c, e }); }
+    const done = new Uint8Array(n);
+    while (open.size) {
+      let u = -1, du = Infinity;
+      for (const v of open) if (dist[v] < du) { du = dist[v]; u = v; }
+      open.delete(u); done[u] = 1;
+      if (best && du >= best.length) break;
+      const end = endCost.get(u);
+      if (end && du + end.c < (best ? best.length : Infinity)) best = { length: du + end.c, node: u, end: end.e };
+      for (const ed of this.adj[u]) {
+        if (done[ed.to]) continue;
+        const nd = du + ed.cost;
+        if (nd < dist[ed.to]) { dist[ed.to] = nd; prev[ed.to] = { from: u, edge: ed }; open.add(ed.to); }
+      }
+    }
+    if (!best || best.legs) return best;
+    // walk back from the final node to the start
+    const legs = [{ road: rb, from: best.end.li, dir: -best.end.dir, len: best.end.steps }];
+    let v = best.node;
+    while (prev[v] && !prev[v].start) { const { from, edge } = prev[v]; legs.push({ road: edge.road, from: edge.from, dir: edge.dir, len: edge.len }); v = from; }
+    const s = prev[v].start;
+    legs.push({ road: ra, from: A.li, dir: s.dir, len: s.steps });
+    legs.reverse();
+    // passing straight through a junction splits a road into two legs; join them back up
+    const merged = [];
+    for (const l of legs) {
+      if (l.len <= 0) continue;
+      const p = merged[merged.length - 1];
+      if (p && p.road === l.road && p.dir === l.dir) p.len += l.len;
+      else merged.push({ ...l });
+    }
+    return { length: best.length, legs: merged };
+  }
+
+  /** Sample indices along a route, every `stride` samples. */
+  routeIndices(route, stride = 2) {
+    const out = [];
+    if (!route) return out;
+    for (const leg of route.legs) {
+      const road = this.roads[leg.road];
+      for (let k = 0; k <= leg.len; k += stride) out.push(this.roadWrap(road, road.i0 + leg.from + leg.dir * k, true));
+      out.push(this.roadWrap(road, road.i0 + leg.from + leg.dir * leg.len, true));
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------ City
+  /** Building footprints on the lots between the city streets (shared by the 3D world and the map). */
+  _buildCity() {
+    const lots = 3, pad = 13;
+    const lotW = (CITY.step - pad * 2) / lots;
+    this.buildings = [];
+    for (let bi = 0; bi < 5; bi++) for (let bj = 0; bj < 5; bj++) {
+      const bx0 = CITY.x0 + bi * CITY.step + pad, bz0 = CITY.z0 + bj * CITY.step + pad;
+      for (let li = 0; li < lots; li++) for (let lj = 0; lj < lots; lj++) {
+        const lx = bx0 + (li + 0.5) * lotW, lz = bz0 + (lj + 0.5) * lotW;
+        const rand = mulberry32((bi * 5 + bj) * 9 + li * 3 + lj + 777);
+        if (rand() < 0.14) continue;   // a car park / plaza
+        const w = lotW * (0.55 + rand() * 0.35), d = lotW * (0.55 + rand() * 0.35);
+        const dc = Math.hypot(lx - CITY.cx, lz - CITY.cz);
+        const h = dc < 230 ? 45 + rand() * 90 : dc < 420 ? 18 + rand() * 42 : 9 + rand() * 18;
+        this.buildings.push({ x: lx, z: lz, w, d, h, hw: w / 2, hd: d / 2, mat: rand() });
+      }
+    }
+  }
+
   // ------------------------------------------------------------ Placed items
   _placeItems() {
     const roadside = (idx, side, off) => {
@@ -437,7 +655,8 @@ export class World {
       const lengthM = (i1 - i0) * SPACING;
       // drift zone thresholds are given per 100 m of zone and scale with its length
       const stars = z.perHundred ? z.stars.map(v => Math.round((v * lengthM) / 100 / 100) * 100) : z.stars;
-      return { ...z, stars, i0, i1, road: r.id, x: m.p.x, z: m.p.z, y: m.p.y, lengthM };
+      // idx (for the GPS and fast travel) is the start gantry; the marker sits mid-zone
+      return { ...z, stars, i0, i1, idx: i0, road: r.id, x: m.p.x, z: m.p.z, y: m.p.y, lengthM };
     };
     this.drifts = DRIFTS.map(z => ({ ...span(z), kind: 'drift', name: 'Drift Zone' }));
     this.zones = SPEEDZONES.map(z => ({ ...span(z), kind: 'zone', name: 'Speed Zone' }));
