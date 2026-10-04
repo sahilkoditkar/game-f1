@@ -1,8 +1,10 @@
 // Free Roam HUD: speed, compass, radar minimap, waypoint, event prompt,
 // live drift/speed-zone score, XP, and popups/toasts for skills and discoveries.
-import { levelForXp } from './worlddef.js';
+import { levelForXp, CITY } from './worlddef.js';
+import { terrainLayer, MAP_EXTENT, ROAD_STYLE, ROUTE_COLOR, MARKER_COLORS, drawMarkerIcon, drawPin, drawPlayerArrow, drawPropFootprints } from './worldmap.js';
 
-const RADAR_M = 380;   // metres shown across the radar
+const RADAR_NEAR = 320, RADAR_FAR = 680;   // metres shown top to bottom, standing still → flat out
+const RADAR_KINDS = ['dirt', 'lane', 'street', 'road', 'highway'];
 
 export class HorizonHUD {
   constructor(hz) {
@@ -40,8 +42,8 @@ export class HorizonHUD {
         <div class="speed"><b>0</b><small>km/h</small></div>
         <div class="gear-bar"><i style="width:0%"></i></div>
       </div>
-      <canvas class="hz-radar" width="240" height="240"></canvas>
-      <div class="hz-waypoint hidden"><span class="arrow">➤</span><b></b><span class="name"></span></div>
+      <canvas class="hz-radar"></canvas>
+      <div class="hz-waypoint hidden"><span class="turn"></span><div><div class="instr"></div><div class="info"><b></b> · <span class="name"></span></div></div></div>
       <div class="hz-prompt hidden"></div>
       <div class="hz-live hidden"><div class="label"></div><div class="score"></div></div>
       <div class="msg"><span class="main"></span><span class="sub"></span></div>
@@ -54,7 +56,7 @@ export class HorizonHUD {
     const q = (s) => this.el.querySelector(s);
     this.q = {
       region: q('.hz-region'), road: q('.hz-road'), compass: q('.hz-compass'), level: q('.hz-level b'), xp: q('.hz-xpbar i'), money: q('.hz-money'),
-      speed: q('.speed b'), bar: q('.gear-bar i'), radar: q('.hz-radar'), wp: q('.hz-waypoint'), wpArrow: q('.hz-waypoint .arrow'), wpDist: q('.hz-waypoint b'), wpName: q('.hz-waypoint .name'),
+      speed: q('.speed b'), bar: q('.gear-bar i'), radar: q('.hz-radar'), wp: q('.hz-waypoint'), wpTurn: q('.hz-waypoint .turn'), wpInstr: q('.hz-waypoint .instr'), wpDist: q('.hz-waypoint .info b'), wpName: q('.hz-waypoint .name'),
       prompt: q('.hz-prompt'), live: q('.hz-live'), liveLabel: q('.hz-live .label'), liveScore: q('.hz-live .score'),
       msg: q('.msg'), msgMain: q('.msg .main'), msgSub: q('.msg .sub'), toasts: q('.hz-toasts'),
     };
@@ -100,17 +102,18 @@ export class HorizonHUD {
       q.money.textContent = `${Math.round(hz.profile.money).toLocaleString()} cr`;
     }
 
-    // Waypoint
+    // Waypoint: turn-by-turn from the GPS route
     if (hz.waypoint) {
-      const dx = hz.waypoint.x - car.pos.x, dz = hz.waypoint.z - car.pos.z;
-      const d = Math.hypot(dx, dz);
-      let rel = Math.atan2(dx, dz) - car.heading;
-      while (rel > Math.PI) rel -= Math.PI * 2;
-      while (rel < -Math.PI) rel += Math.PI * 2;
+      const fmt = (d) => d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d / 10) * 10} m`;
+      const g = hz.routeGuide();
+      const total = hz.route ? hz.route.length : Math.hypot(hz.waypoint.x - car.pos.x, hz.waypoint.z - car.pos.z);
       q.wp.classList.remove('hidden');
-      q.wpArrow.style.transform = `rotate(${(-rel * 180 / Math.PI) - 90}deg)`;
-      q.wpDist.textContent = d >= 1000 ? `${(d / 1000).toFixed(1)} km` : `${Math.round(d)} m`;
-      q.wpName.textContent = hz.waypoint.name;
+      const turn = g ? g.turn : 'ahead';
+      q.wpTurn.className = `turn t-${turn}`;
+      q.wpTurn.textContent = { left: '↰', right: '↱', ahead: '↑', back: '↶', arrive: '◎' }[turn];
+      q.wpInstr.textContent = g ? (g.dist > 0 && turn !== 'back' ? `${g.text} · ${fmt(g.dist)}` : g.text) : 'Head to the waypoint';
+      q.wpDist.textContent = fmt(total);
+      q.wpName.textContent = hz.waypoint.kind === 'custom' ? 'Waypoint' : hz.waypoint.name;
     } else q.wp.classList.add('hidden');
 
     // Event prompt
@@ -166,78 +169,140 @@ export class HorizonHUD {
     ctx.fillStyle = '#ff5a1f'; ctx.fillRect(w / 2 - 1, 0, 2, h);
   }
 
+  /** GTA-style radar: heading-up terrain, roads by class, the GPS route, and markers clamped to the edge. */
   _drawRadar(car) {
-    const c = this.q.radar, ctx = c.getContext('2d');
-    const size = c.width, half = size / 2;
-    const sc = size / RADAR_M;
-    const W = this.hz.world;
-    ctx.clearRect(0, 0, size, size);
+    const c = this.q.radar, hz = this.hz, W = hz.world;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cw = c.clientWidth || 280, ch = c.clientHeight || 190;
+    if (c.width !== Math.round(cw * dpr) || c.height !== Math.round(ch * dpr)) { c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr); }
+    const ctx = c.getContext('2d');
+    if (!this.terrain) this.terrain = terrainLayer(W);
+    // zoom out with speed so there is time to read the junction coming up
+    this.radarSpan = (this.radarSpan || RADAR_NEAR) + ((RADAR_NEAR + (RADAR_FAR - RADAR_NEAR) * Math.min(1, car.speed / 55)) - (this.radarSpan || RADAR_NEAR)) * 0.04;
+    const sc = ch / this.radarSpan;
+    const cx = cw / 2, cy = ch * 0.64;
+    const th = car.heading + Math.PI, cos = Math.cos(th), sin = Math.sin(th);
+    const toR = (x, z) => { const dx = x - car.pos.x, dz = z - car.pos.z; return { x: cx + (dx * cos - dz * sin) * sc, y: cy + (dx * sin + dz * cos) * sc }; };
+    const rad = 14;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
     ctx.save();
-    ctx.beginPath(); ctx.arc(half, half, half - 2, 0, Math.PI * 2); ctx.clip();
-    ctx.fillStyle = 'rgba(10,14,22,0.55)'; ctx.fillRect(0, 0, size, size);
-    ctx.translate(half, half);
-    ctx.rotate(car.heading + Math.PI);
-    ctx.scale(sc, sc);
-    ctx.translate(-car.pos.x, -car.pos.z);
-    // roads from the grid cells around the player
-    const cell = W.cell, R = Math.ceil((RADAR_M * 0.75) / cell);
-    const cx = Math.floor(car.pos.x / cell), cz = Math.floor(car.pos.z / cell);
-    ctx.lineCap = 'round';
-    for (let pass = 0; pass < 2; pass++) {
-      ctx.strokeStyle = pass === 0 ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.85)';
-      ctx.beginPath();
-      for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
-        const list = W.grid.get(`${cx + dx},${cz + dz}`);
-        if (!list) continue;
-        for (const i of list) {
-          const s = W.samples[i];
-          if (s.li % 2) continue;
-          const road = W.roads[s.road];
-          const j = W.roadWrap(road, i + 2);
-          if (j < 0) continue;
-          const o = W.samples[j];
-          ctx.lineWidth = (s.hw * 2) + (pass === 0 ? 4 : 0);
-          ctx.moveTo(s.p.x, s.p.z); ctx.lineTo(o.p.x, o.p.z);
-        }
+    ctx.beginPath(); ctx.roundRect(1, 1, cw - 2, ch - 2, rad); ctx.clip();
+    ctx.fillStyle = 'rgb(38,104,168)'; ctx.fillRect(0, 0, cw, ch);
+    // world layer
+    ctx.save();
+    ctx.translate(cx, cy); ctx.rotate(th); ctx.scale(sc, sc); ctx.translate(-car.pos.x, -car.pos.z);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.terrain, -MAP_EXTENT, -MAP_EXTENT, MAP_EXTENT * 2, MAP_EXTENT * 2);
+    const reach = this.radarSpan * 0.95;
+    if (Math.abs(car.pos.x - CITY.cx) < 900 && Math.abs(car.pos.z - CITY.cz) < 900) {
+      for (const b of W.buildings) {
+        if (Math.abs(b.x - car.pos.x) > reach || Math.abs(b.z - car.pos.z) > reach) continue;
+        ctx.save(); ctx.translate(b.x, b.z); ctx.rotate(-b.rot);
+        ctx.fillStyle = '#a9adb8'; ctx.fillRect(-b.hw, -b.hd, b.w, b.d);
+        ctx.restore();
       }
+    }
+    drawPropFootprints(ctx, W.props, { x0: car.pos.x - reach, z0: car.pos.z - reach, x1: car.pos.x + reach, z1: car.pos.z + reach }, sc);
+    // roads from the grid cells in reach, batched by class
+    const cell = W.cell, R = Math.ceil(reach / cell);
+    const gx = Math.floor(car.pos.x / cell), gz = Math.floor(car.pos.z / cell);
+    const segs = Object.fromEntries(RADAR_KINDS.map(k => [k, []]));
+    for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
+      const list = W.grid.get(`${gx + dx},${gz + dz}`);
+      if (!list) continue;
+      for (const i of list) {
+        const s = W.samples[i];
+        if (s.li % 2) continue;
+        const road = W.roads[s.road];
+        const j = W.roadWrap(road, i + 2);
+        if (j < 0) continue;
+        segs[road.kind].push(s.p, W.samples[j].p);
+      }
+    }
+    ctx.lineCap = 'round';
+    for (const pass of ['casing', 'fill']) for (const kind of RADAR_KINDS) {
+      const list = segs[kind];
+      if (!list.length) continue;
+      const st = ROAD_STYLE[kind];
+      const wpx = Math.max(st.min * 1.2, { highway: 20, road: 14, street: 13, lane: 10, dirt: 9 }[kind] * sc);
+      ctx.lineWidth = (pass === 'casing' ? wpx + 2.4 : wpx) / sc;
+      ctx.strokeStyle = pass === 'casing' ? st.casing : st.fill;
+      ctx.beginPath();
+      for (let k = 0; k < list.length; k += 2) { ctx.moveTo(list[k].x, list[k].z); ctx.lineTo(list[k + 1].x, list[k + 1].z); }
       ctx.stroke();
     }
-    // markers
-    const col = { hub: '#ffd23f', event: '#ff5a1f', trap: '#2f7bff', drift: '#b04cff', zone: '#00d4ff' };
-    for (const m of W.markers) {
-      const dx = m.x - car.pos.x, dz = m.z - car.pos.z;
-      if (dx * dx + dz * dz > (RADAR_M * 0.8) ** 2) continue;
-      ctx.fillStyle = m.kind === 'event' && m.track.kind === 'stage' ? '#3ddc84' : col[m.kind];
-      ctx.beginPath(); ctx.arc(m.x, m.z, 7, 0, Math.PI * 2); ctx.fill();
-    }
-    for (const t of this.hz.traffic.cars) {
-      const dx = t.pos.x - car.pos.x, dz = t.pos.z - car.pos.z;
-      if (dx * dx + dz * dz > (RADAR_M * 0.8) ** 2) continue;
-      ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.arc(t.pos.x, t.pos.z, 3.5, 0, Math.PI * 2); ctx.fill();
-    }
-    for (const b of W.boards) {
-      if (!this.hz.boardMeshes.has(b.id)) continue;
-      const dx = b.x - car.pos.x, dz = b.z - car.pos.z;
-      if (dx * dx + dz * dz > (RADAR_M * 0.8) ** 2) continue;
-      ctx.fillStyle = '#3ddc84'; ctx.fillRect(b.x - 4, b.z - 4, 8, 8);
+    // GPS route
+    if (hz.routeIdx && hz.routeIdx.length > 1) {
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      let pen = false;
+      for (const i of hz.routeIdx) {
+        const p = W.samples[i].p;
+        const near = Math.abs(p.x - car.pos.x) < reach * 1.3 && Math.abs(p.z - car.pos.z) < reach * 1.3;
+        if (!near) { pen = false; continue; }
+        if (pen) ctx.lineTo(p.x, p.z); else { ctx.moveTo(p.x, p.z); pen = true; }
+      }
+      ctx.strokeStyle = 'rgba(30,8,48,0.7)'; ctx.lineWidth = 8.5 / sc; ctx.stroke();
+      ctx.strokeStyle = ROUTE_COLOR; ctx.lineWidth = 5.5 / sc; ctx.stroke();
     }
     ctx.restore();
-    // waypoint edge indicator
-    if (this.hz.waypoint) {
-      const wp = this.hz.waypoint;
-      const dx = wp.x - car.pos.x, dz = wp.z - car.pos.z;
-      const d = Math.hypot(dx, dz);
-      let rel = Math.atan2(dx, dz) - car.heading;   // >0 = target to the left
-      const r = Math.min(half - 10, d * sc);
-      const x = half - Math.sin(rel) * r, y = half - Math.cos(rel) * r;
-      ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(x, y - 7); ctx.lineTo(x + 6, y); ctx.lineTo(x, y + 7); ctx.lineTo(x - 6, y); ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // markers (screen space so icons stay upright)
+    const inset = 12;
+    const inside = (p, m = 0) => p.x > m && p.y > m && p.x < cw - m && p.y < ch - m;
+    for (const b of W.boards) {
+      if (!hz.boardMeshes.has(b.id)) continue;
+      const p = toR(b.x, b.z);
+      if (inside(p, 4)) drawMarkerIcon(ctx, p.x, p.y, b, {}, 5);
     }
-    // player
-    ctx.fillStyle = '#ff5a1f'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(half, half - 9); ctx.lineTo(half + 6, half + 7); ctx.lineTo(half, half + 3); ctx.lineTo(half - 6, half + 7); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(half, half, half - 2, 0, Math.PI * 2); ctx.stroke();
+    for (const t of hz.traffic.cars) {
+      const p = toR(t.pos.x, t.pos.z);
+      if (!inside(p)) continue;
+      ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    for (const m of W.markers) {
+      const p = toR(m.x, m.z);
+      const done = m.kind === 'event' ? !!hz.prog.events[m.id] : false;
+      if (inside(p, 6)) drawMarkerIcon(ctx, p.x, p.y, m, { done, locked: m.kind !== 'hub' && !hz.prog.discovered.includes(m.id) }, 7.5);
+      else if (m.kind === 'event' || m.kind === 'hub') {
+        // nearby events peek in at the edge, like the games' radar blips
+        const d = Math.hypot(m.x - car.pos.x, m.z - car.pos.z);
+        if (d < this.radarSpan * 1.6) { const e = this._edge(cx, cy, p, cw, ch, inset); ctx.globalAlpha = 0.75; drawMarkerIcon(ctx, e.x, e.y, m, {}, 5.5); ctx.globalAlpha = 1; }
+      }
+    }
+    // waypoint: pin, or clamped to the edge with its distance
+    if (hz.waypoint) {
+      const wp = hz.waypoint, p = toR(wp.x, wp.z);
+      if (inside(p, 8)) drawPin(ctx, p.x, p.y, 6, MARKER_COLORS.custom);
+      else {
+        const e = this._edge(cx, cy, p, cw, ch, inset + 2);
+        ctx.fillStyle = MARKER_COLORS.custom; ctx.strokeStyle = '#2a2000'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(e.x, e.y, 6.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#2a2000'; ctx.beginPath(); ctx.arc(e.x, e.y, 2.4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    drawPlayerArrow(ctx, cx, cy, 0, 8);
+    // north marker on the rim
+    const nP = toR(car.pos.x, car.pos.z - 10000), nE = this._edge(cx, cy, nP, cw, ch, 11);
+    ctx.fillStyle = 'rgba(10,14,22,0.85)'; ctx.beginPath(); ctx.arc(nE.x, nE.y, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ff5a1f'; ctx.font = '900 10px Segoe UI, Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('N', nE.x, nE.y + 0.5);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(1, 1, cw - 2, ch - 2, rad); ctx.stroke();
+  }
+
+  /** Where the ray from (cx, cy) toward p leaves the radar rectangle (inset by m). */
+  _edge(cx, cy, p, w, h, m) {
+    const dx = p.x - cx, dy = p.y - cy;
+    let t = Infinity;
+    if (dx > 0) t = Math.min(t, (w - m - cx) / dx); else if (dx < 0) t = Math.min(t, (m - cx) / dx);
+    if (dy > 0) t = Math.min(t, (h - m - cy) / dy); else if (dy < 0) t = Math.min(t, (m - cy) / dy);
+    if (!isFinite(t)) t = 0;
+    t = Math.min(1, t);
+    return { x: cx + dx * t, y: cy + dy * t };
   }
 
   dispose() {

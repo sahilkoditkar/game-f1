@@ -2,13 +2,14 @@
 // player, with the circuits as drive-up events, speed traps, drift zones, speed
 // zones and bonus boards. Progress lives in profile.horizon.
 import * as THREE from 'three';
-import { World, fbm, smoothstep, mulberry32 } from './world.js';
+import { World, fbm, smoothstep, mulberry32, coastDist } from './world.js';
 import { Car } from './car.js';
 import { DriftFx } from './fx.js';
 import { buildSun, aimSun, buildEnvironment, updateChaseCamera, snapChaseCamera } from './scenekit.js';
 import { addTrees } from './scenery.js';
 import { HorizonHUD } from './horizonhud.js';
 import { Traffic } from './traffic.js';
+import { PropKit, mergeByMaterial } from './props.js';
 import { getCar, PLAYER_COLORS } from './data.js';
 import { playerStats } from './career.js';
 import { getControl } from './input.js';
@@ -48,6 +49,7 @@ export class Horizon {
     this.time = 0;
     this.paused = false; this.suspended = false;
     this.waypoint = null;
+    this.route = null; this.routeIdx = null; this.routeTimer = 0;
     this.prompt = null;
     this.promptCooldown = 0;
     this.requestMap = false;
@@ -58,6 +60,14 @@ export class Horizon {
 
     this._buildRoads();
     this._buildStatic();
+    // roadside props, bucketed by chunk for streaming
+    this.propKit = new PropKit(this.highQ);
+    this.propsByChunk = new Map();
+    for (const p of this.world.props) {
+      const key = this._chunkKey(Math.floor(p.x / CHUNK), Math.floor(p.z / CHUNK));
+      if (!this.propsByChunk.has(key)) this.propsByChunk.set(key, []);
+      this.propsByChunk.get(key).push(p);
+    }
     this._buildProps();
     this._setupPlayer();
     this.traffic = new Traffic(this, this.highQ ? 26 : 14);
@@ -79,7 +89,7 @@ export class Horizon {
     this.car = new Car({ name: p.name, color: PLAYER_COLORS[p.colorIndex || 0], stats: playerStats(p), shape: carDef.shape, isPlayer: true, playerIndex: 0, quality: this.quality });
     this.scene.add(this.car.mesh);
     const saved = this.prog.pos;
-    if (saved && Math.abs(saved[0]) < WORLD_HALF && Math.abs(saved[1]) < WORLD_HALF) {
+    if (saved && Math.abs(saved[0]) < WORLD_HALF && Math.abs(saved[1]) < WORLD_HALF && coastDist(saved[0], saved[1]) > 20) {
       const idx = this.world.nearestGlobal(saved[0], saved[1]).idx;
       this.car.trackIdx = Math.max(0, idx);
       this.tmp.set(saved[0], 0, saved[1]);
@@ -109,36 +119,41 @@ export class Horizon {
   _buildRoads() {
     const g = new THREE.Group();
     const texByKind = {};
+    const padTex = makeWorldRoadTexture('pad', 0);
+    const padMat = new THREE.MeshStandardMaterial({ map: padTex, roughness: 0.9, metalness: 0.02 });
     for (const road of this.world.roads) {
       if (!texByKind[road.kind]) texByKind[road.kind] = makeWorldRoadTexture(road.kind, road.width);
       const tex = texByKind[road.kind];
       const yo = road.yOff;
       const reps = road.closed ? Math.max(1, Math.round(road.length / 14)) : road.length / 14;
-      const surf = this._strip(road, (s) => s.hw, (s) => -s.hw, yo, yo, (li, side) => [side === 0 ? 0 : 1, (li / road.n) * reps]);
+      const uv = (li, side) => [side === 0 ? 0 : 1, (li / road.n) * reps];
       const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: road.kind === 'dirt' ? 1 : 0.9, metalness: 0.02 });
-      const m = new THREE.Mesh(surf, mat); m.receiveShadow = true; g.add(m);
-      // shoulders: a pavement kerb in the city, a sloping gravel verge elsewhere
+      // Inside junctions the surface is plain asphalt (no edge or centre lines running
+      // across the other road). A minor road there sits a few centimetres under the
+      // major so the two never fight; both lie on the major road's surface.
+      const W = this.world;
+      const inJ = (li) => !!W.samples[road.i0 + (li % road.n)].jz;
+      for (const [a, b] of runs(road, (li) => !inJ(li))) {
+        const m = new THREE.Mesh(this._strip(road, (s) => s.hw, (s) => -s.hw, yo, yo, uv, a, b), mat); m.receiveShadow = true; g.add(m);
+      }
+      for (const [a, b] of runs(road, inJ)) {
+        const sub = W.samples[road.i0 + (a % road.n)].jroad !== undefined ? -0.035 : 0;
+        const m = new THREE.Mesh(this._strip(road, (s) => s.hw, (s) => -s.hw, yo + sub, yo + sub, uv, a, b, true), road.kind === 'dirt' ? mat : padMat); m.receiveShadow = true; g.add(m);
+      }
+      // shoulders: a pavement kerb in the city, a sloping gravel verge elsewhere; dropped
+      // on whichever side another road joins
       const street = road.kind === 'street';
       const shW = street ? 2.4 : 2.8;
       const shColor = street ? 0x9a9ca2 : (road.kind === 'dirt' ? 0x7f6b4e : 0x8e8a7c);
       const shMat = new THREE.MeshStandardMaterial({ color: shColor, roughness: 1 });
-      const yOuter = street ? yo + 0.14 : yo - 0.1;
-      const L = this._strip(road, (s) => s.hw + shW, (s) => s.hw, yOuter, street ? yo + 0.14 : yo);
-      const R = this._strip(road, (s) => -s.hw, (s) => -s.hw - shW, street ? yo + 0.14 : yo, yOuter);
-      for (const sg of [L, R]) { const sm = new THREE.Mesh(sg, shMat); sm.receiveShadow = true; g.add(sm); }
-    }
-    // Junction pads: a plain asphalt disc over every crossing and T-junction so the
-    // two roads' edges, kerbs and markings don't collide where they meet.
-    const padTex = makeWorldRoadTexture('pad', 0);
-    const padMat = new THREE.MeshStandardMaterial({ map: padTex, roughness: 0.9, metalness: 0.02, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-    for (const [i, j] of this.world.junctionPairs) {
-      const a = this.world.samples[i], b = this.world.samples[j];
-      const r = Math.max(a.hw, b.hw) + 2.2;
-      const pad = new THREE.Mesh(new THREE.CircleGeometry(r, 28), padMat);
-      pad.rotation.x = -Math.PI / 2;
-      pad.position.set((a.p.x + b.p.x) / 2, Math.max(a.p.y, b.p.y) + Math.max(this.world.roadOf(i).yOff, this.world.roadOf(j).yOff) + 0.02, (a.p.z + b.p.z) / 2);
-      pad.receiveShadow = true;
-      g.add(pad);
+      const yOuter = street ? yo + 0.14 : yo - 0.1, yInner = street ? yo + 0.14 : yo;
+      const sideOk = (key) => (li) => !W.samples[road.i0 + (li % road.n)][key];
+      for (const [a, b] of runs(road, sideOk('noL'))) {
+        const m = new THREE.Mesh(this._strip(road, (s) => s.hw + shW, (s) => s.hw, yOuter, yInner, null, a, b, true), shMat); m.receiveShadow = true; g.add(m);
+      }
+      for (const [a, b] of runs(road, sideOk('noR'))) {
+        const m = new THREE.Mesh(this._strip(road, (s) => -s.hw, (s) => -s.hw - shW, yInner, yOuter, null, a, b, true), shMat); m.receiveShadow = true; g.add(m);
+      }
     }
     this.roadGroup = g;
     this.scene.add(g);
@@ -149,21 +164,25 @@ export class Horizon {
    * per-side height offsets. Loops get the first vertex pair duplicated at the end so
    * the texture coordinate keeps running across the seam instead of snapping back to 0.
    */
-  _strip(road, a, b, ya, yb, uvFn = null) {
+  _strip(road, a, b, ya, yb, uvFn = null, from = 0, to = null, tilt = false) {
     const W = this.world, N = road.n;
-    const M = road.closed ? N + 1 : N;
+    const last = to === null ? (road.closed ? N : N - 1) : to;
+    const M = last - from + 1;
     const pos = new Float32Array(M * 6), uv = new Float32Array(M * 4);
-    for (let li = 0; li < M; li++) {
+    for (let m = 0; m < M; m++) {
+      const li = from + m;
       const s = W.samples[road.i0 + (li % N)];
       const A = a(s), B = b(s);
-      pos.set([s.p.x + s.n.x * A, s.p.y + ya, s.p.z + s.n.z * A, s.p.x + s.n.x * B, s.p.y + yb, s.p.z + s.n.z * B], li * 6);
+      // inside a junction a minor road is tilted to lie on the major road's surface
+      const yA = tilt ? W.surfaceAt(s, A) : s.p.y, yB = tilt ? W.surfaceAt(s, B) : s.p.y;
+      pos.set([s.p.x + s.n.x * A, yA + ya, s.p.z + s.n.z * A, s.p.x + s.n.x * B, yB + yb, s.p.z + s.n.z * B], m * 6);
       const ua = uvFn ? uvFn(li, 0) : [0, li / 4], ub = uvFn ? uvFn(li, 1) : [1, li / 4];
-      uv.set([ua[0], ua[1], ub[0], ub[1]], li * 4);
+      uv.set([ua[0], ua[1], ub[0], ub[1]], m * 4);
     }
     const idx = [];
-    for (let li = 0; li < M - 1; li++) {
-      const j = li + 1;
-      idx.push(li * 2, li * 2 + 1, j * 2, li * 2 + 1, j * 2 + 1, j * 2);
+    for (let m = 0; m < M - 1; m++) {
+      const j = m + 1;
+      idx.push(m * 2, m * 2 + 1, j * 2, m * 2 + 1, j * 2 + 1, j * 2);
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -196,28 +215,12 @@ export class Horizon {
     far.computeVertexNormals();
     this.scene.add(new THREE.Mesh(far, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 })));
 
-    // Sea
-    const sea = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_HALF * 4, 3200), new THREE.MeshStandardMaterial({ color: 0x2277cc, roughness: 0.2, metalness: 0.35, transparent: true, opacity: 0.9 }));
+    // The sea, all the way round the island to the horizon
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(24000, 24000), new THREE.MeshStandardMaterial({ color: 0x2277cc, roughness: 0.2, metalness: 0.35, transparent: true, opacity: 0.9 }));
     sea.rotation.x = -Math.PI / 2;
-    sea.position.set(0, SEA_LEVEL, SEA_Z + 1500);
+    sea.position.set(0, SEA_LEVEL, 0);
     this.scene.add(sea);
 
-    // Mountain backdrop along the north, east and west horizons
-    const rand = mulberry32(4242);
-    const rockMat = new THREE.MeshStandardMaterial({ color: 0x7d8da0, roughness: 1, flatShading: true });
-    const snowMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, flatShading: true });
-    for (let i = 0; i < 34; i++) {
-      const a = Math.PI + (i / 33) * Math.PI;          // from west (π) through north to east (2π)
-      const r = 3500 + rand() * 500;
-      const coneR = 320 + rand() * 260, h = 380 + rand() * 420;
-      const m = new THREE.Mesh(new THREE.ConeGeometry(coneR, h, 6 + Math.floor(rand() * 3)), rockMat);
-      m.position.set(Math.cos(a) * r, -60 + h / 2, Math.sin(a) * r);
-      m.rotation.y = rand() * Math.PI;
-      this.scene.add(m);
-      const cap = new THREE.Mesh(new THREE.ConeGeometry(coneR * 0.42, h * 0.3, 6), snowMat);
-      cap.position.set(m.position.x, -60 + h - h * 0.15, m.position.z); cap.rotation.y = m.rotation.y;
-      this.scene.add(cap);
-    }
     // Shared terrain material with a subtle noise detail map
     const detail = makeDetailTexture();
     detail.wrapS = detail.wrapT = THREE.RepeatWrapping;
@@ -296,7 +299,7 @@ export class Horizon {
     for (let dx = -R; dx <= R; dx++) for (let dz = -R; dz <= R; dz++) {
       const cx = ccx + dx, cz = ccz + dz;
       const wx = (cx + 0.5) * CHUNK, wz = (cz + 0.5) * CHUNK;
-      if (Math.abs(wx) > WORLD_HALF + CHUNK || wz > SEA_Z + CHUNK || wz < -WORLD_HALF - CHUNK) continue;
+      if (coastDist(wx, wz) < -CHUNK) continue;   // open sea: nothing to build
       const d = Math.hypot(wx - px, wz - pz);
       if (d > VIEW_R) continue;
       const key = this._chunkKey(cx, cz);
@@ -359,12 +362,12 @@ export class Horizon {
     const region = W.regionAt(x0, z0).id;
     const density = { forest: 0.0011, grass: 0.00016, alpine: 0.00035, coast: 0.00022, desert: 0.00014, city: 0 }[region] || 0;
     const kind = { forest: 'pine', grass: 'round', alpine: 'pine', coast: 'palm', desert: 'cactus' }[region];
-    if (density > 0 && kind && z0 < SEA_Z) {
+    if (density > 0 && kind && coastDist(x0, z0) > -CHUNK) {
       const count = Math.round(density * CHUNK * CHUNK * (this.highQ ? 1 : 0.55));
       const positions = [];
       for (let t = 0; t < count * 3 && positions.length < count; t++) {
         const x = x0 + (rand() - 0.5) * CHUNK, z = z0 + (rand() - 0.5) * CHUNK;
-        if (z > SEA_Z - 60 || Math.abs(x) > WORLD_HALF) continue;
+        if (coastDist(x, z) < 45) continue;
         if (x > CITY.x0 - 90 && x < CITY.x1 + 90 && z > CITY.z0 - 90 && z < CITY.z1 + 90) continue;
         const near = W.nearestGlobal(x, z, 1);
         if (near.idx >= 0 && near.dist < W.samples[near.idx].hw + 5.5) continue;
@@ -377,43 +380,43 @@ export class Horizon {
 
     // City blocks: buildings on lots between the streets
     if (inCity) this._buildCityLots(chunk, x0, z0);
+    // Roadside props; the solid ones join the chunk's colliders
+    const props = this.propsByChunk.get(this._chunkKey(cx, cz));
+    if (props) {
+      this.propKit.build(group, props);
+      for (const p of props) chunk.buildings.push(...p.colliders);
+    }
     return chunk;
   }
 
   _buildCityLots(chunk, x0, z0) {
     const W = this.world;
-    const lots = 3, pad = 13;
-    const lotW = (CITY.step - pad * 2) / lots;
     if (!this.facadeMats) {
       this.facadeMats = [0x9aa4b4, 0x6f8aa8, 0xb9ad98, 0x7c7f88].map(c => new THREE.MeshStandardMaterial({ map: makeFacadeTexture(c), roughness: 0.55, metalness: 0.15 }));
       this.roofMat = new THREE.MeshStandardMaterial({ color: 0x4a4d55, roughness: 1 });
+      for (const m of [...this.facadeMats, this.roofMat]) m.userData.shared = true;   // reused by every city chunk
     }
-    for (let bi = 0; bi < 5; bi++) for (let bj = 0; bj < 5; bj++) {
-      const bx0 = CITY.x0 + bi * CITY.step + pad, bz0 = CITY.z0 + bj * CITY.step + pad;
-      for (let li = 0; li < lots; li++) for (let lj = 0; lj < lots; lj++) {
-        const lx = bx0 + (li + 0.5) * lotW, lz = bz0 + (lj + 0.5) * lotW;
-        if (Math.abs(lx - x0) > CHUNK / 2 || Math.abs(lz - z0) > CHUNK / 2) continue;
-        const rand = mulberry32((bi * 5 + bj) * 9 + li * 3 + lj + 777);
-        if (rand() < 0.14) continue;   // a car park / plaza
-        const w = lotW * (0.55 + rand() * 0.35), d = lotW * (0.55 + rand() * 0.35);
-        const dc = Math.hypot(lx - 1900, lz - 1900);
-        const h = dc < 230 ? 45 + rand() * 90 : dc < 420 ? 18 + rand() * 42 : 9 + rand() * 18;
-        const geo = new THREE.BoxGeometry(w, h, d);
-        const uv = geo.attributes.uv;
-        for (let v = 0; v < uv.count; v++) {
-          const face = Math.floor(v / 4);
-          const su = face < 2 ? d : face < 4 ? w : w, sv = face < 2 ? h : face < 4 ? d : h;
-          uv.setXY(v, uv.getX(v) * su / 4, uv.getY(v) * sv / 3.6);
-        }
-        const facade = this.facadeMats[Math.floor(rand() * this.facadeMats.length)];
-        const m = new THREE.Mesh(geo, [facade, facade, this.roofMat, this.roofMat, facade, facade]);
-        const gy = W.terrainHeight(lx, lz);
-        m.position.set(lx, gy + h / 2 - 0.4, lz);
-        m.receiveShadow = true;
-        chunk.group.add(m);
-        chunk.buildings.push({ x: lx, z: lz, hw: w / 2, hd: d / 2 });
+    const holder = new THREE.Group();   // merged per material below: one draw call per facade
+    for (const b of W.buildings) {
+      if (Math.abs(b.x - x0) > CHUNK / 2 || Math.abs(b.z - z0) > CHUNK / 2) continue;
+      const { w, d, h } = b;
+      const geo = new THREE.BoxGeometry(w, h, d);
+      const uv = geo.attributes.uv;
+      for (let v = 0; v < uv.count; v++) {
+        const face = Math.floor(v / 4);
+        const su = face < 2 ? d : face < 4 ? w : w, sv = face < 2 ? h : face < 4 ? d : h;
+        uv.setXY(v, uv.getX(v) * su / 4, uv.getY(v) * sv / 3.6);
       }
+      const facade = this.facadeMats[Math.floor(b.mat * this.facadeMats.length)];
+      const m = new THREE.Mesh(geo, [facade, facade, this.roofMat, this.roofMat, facade, facade]);
+      const gy = W.terrainHeight(b.x, b.z);
+      m.position.set(b.x, gy + h / 2 - 0.4, b.z);
+      m.rotation.y = b.rot;
+      holder.add(m);
+      chunk.buildings.push(b);
     }
+    mergeByMaterial(chunk.group, holder);
+    holder.traverse(o => { if (o.isMesh) o.geometry.dispose(); });
   }
 
   // ------------------------------------------------------------ Game loop
@@ -444,6 +447,7 @@ export class Horizon {
   /** Fast travel to a marker. */
   teleportTo(marker) {
     this.placeAt(marker.idx, 4);
+    this._updateRoute();
     this.endDrift(true); this.zone = null;
     this._streamChunks(true);
     snapChaseCamera(this.camera, this.car, this.tmp2);
@@ -487,6 +491,8 @@ export class Horizon {
     this._updateZones(car, prevIdx, dt);
     this._updateBoards(car);
     this._updateMarkers(car);
+    this.routeTimer = (this.routeTimer || 0) - dt;
+    if (this.waypoint && this.routeTimer <= 0) { this.routeTimer = 0.4; this._updateRoute(); }
 
     // Effects, camera, sound
     this.fx.setViewport(this.viewport.h, this.camera.fov);
@@ -520,29 +526,39 @@ export class Horizon {
     return down && !was;
   }
 
-  /** World edges, the shoreline and city buildings are solid. */
+  /** The shoreline (a little way into the water) and city buildings are solid. */
   _collideWorld(car) {
-    const lim = WORLD_HALF - 25;
     let hit = 0;
-    const bounce = (axis, sign) => {
-      const v = axis === 'x' ? car.vel.x : car.vel.z;
-      if (v * sign > 0) { hit = Math.max(hit, Math.abs(v)); if (axis === 'x') car.vel.x = -v * 0.3; else car.vel.z = -v * 0.3; }
+    const push = (nx, nz, pen) => {
+      car.pos.x += nx * pen; car.pos.z += nz * pen;
+      const vn = car.vel.x * nx + car.vel.z * nz;
+      if (vn < 0) { hit = Math.max(hit, -vn); car.vel.x -= nx * vn * 1.3; car.vel.z -= nz * vn * 1.3; }
     };
-    if (car.pos.x > lim) { car.pos.x = lim; bounce('x', 1); }
-    if (car.pos.x < -lim) { car.pos.x = -lim; bounce('x', -1); }
-    if (car.pos.z < -lim) { car.pos.z = -lim; bounce('z', -1); }
-    if (car.pos.z > SEA_Z + 45) { car.pos.z = SEA_Z + 45; bounce('z', 1); }
-    // buildings in the surrounding chunks
+    // wading out to sea: pushed back toward the beach
+    const DEEP = -20;
+    const d = coastDist(car.pos.x, car.pos.z);
+    if (d < DEEP) {
+      const e = 3;
+      let gx = coastDist(car.pos.x + e, car.pos.z) - coastDist(car.pos.x - e, car.pos.z);
+      let gz = coastDist(car.pos.x, car.pos.z + e) - coastDist(car.pos.x, car.pos.z - e);
+      const gl = Math.hypot(gx, gz) || 1;
+      push(gx / gl, gz / gl, DEEP - d);
+    }
+    // buildings in the surrounding chunks (each is a box turned to face its street)
     const ccx = Math.floor(car.pos.x / CHUNK), ccz = Math.floor(car.pos.z / CHUNK);
     for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
       const c = this.chunks.get(this._chunkKey(ccx + dx, ccz + dz));
       if (!c || !c.buildings.length) continue;
       for (const b of c.buildings) {
         const ox = car.pos.x - b.x, oz = car.pos.z - b.z;
-        const px = b.hw + 1.1 - Math.abs(ox), pz = b.hd + 1.1 - Math.abs(oz);
+        if (ox * ox + oz * oz > (b.r + 3) * (b.r + 3)) continue;
+        const cs = Math.cos(b.rot), sn = Math.sin(b.rot);
+        const lx = ox * cs - oz * sn, lz = ox * sn + oz * cs;     // car in the building's own frame
+        const px = b.hw + 1.1 - Math.abs(lx), pz = b.hd + 1.1 - Math.abs(lz);
         if (px <= 0 || pz <= 0) continue;
-        if (px < pz) { car.pos.x += Math.sign(ox || 1) * px; bounce('x', -Math.sign(ox || 1)); }
-        else { car.pos.z += Math.sign(oz || 1) * pz; bounce('z', -Math.sign(oz || 1)); }
+        // push out along the shallower local axis, back in world space
+        if (px < pz) { const sx = Math.sign(lx || 1); push(sx * cs, -sx * sn, px); }
+        else { const sz = Math.sign(lz || 1); push(sz * sn, sz * cs, pz); }
       }
     }
     if (hit > 0) {
@@ -701,7 +717,7 @@ export class Horizon {
     }
     if (this.waypoint) {
       const d = Math.hypot(car.pos.x - this.waypoint.x, car.pos.z - this.waypoint.z);
-      if (d < 35) { this.hud.toast(`Arrived: ${this.waypoint.name}`); this.waypoint = null; }
+      if (d < 35) { this.hud.toast(`Arrived: ${this.waypoint.kind === 'custom' ? 'waypoint' : this.waypoint.name}`); this.setWaypoint(null); }
     }
   }
 
@@ -735,64 +751,43 @@ export class Horizon {
     this.onSave();
   }
 
-  // ------------------------------------------------------------ Map rendering (for the UI)
-  /** Draw the whole world into a canvas; the static layer is cached. */
-  drawMap(canvas, selected = null) {
-    const size = canvas.width;
-    const W = this.world;
-    const sc = size / (WORLD_HALF * 2);
-    const X = (x) => (x + WORLD_HALF) * sc, Z = (z) => (z + WORLD_HALF) * sc;
-    if (!this.mapLayer || this.mapLayer.width !== size) {
-      const off = document.createElement('canvas'); off.width = off.height = size;
-      const c = off.getContext('2d');
-      const tint = { grass: '#4b7d3a', forest: '#2f5f2c', desert: '#c9a36b', alpine: '#b9c3cc', city: '#6b6e76', coast: '#5f9450' };
-      const cells = 96, cs = size / cells;
-      for (let i = 0; i < cells; i++) for (let j = 0; j < cells; j++) {
-        const x = -WORLD_HALF + (i + 0.5) * (WORLD_HALF * 2 / cells), z = -WORLD_HALF + (j + 0.5) * (WORLD_HALF * 2 / cells);
-        c.fillStyle = z > SEA_Z ? '#2a6fb0' : (z > SEA_Z - 120 ? '#d9c795' : tint[W.regionAt(x, z).id]);
-        c.fillRect(i * cs - 0.5, j * cs - 0.5, cs + 1, cs + 1);
-      }
-      c.lineCap = 'round'; c.lineJoin = 'round';
-      for (const road of W.roads) {
-        const wpx = { highway: 4.2, road: 3, lane: 2.2, dirt: 2, street: 2 }[road.kind] * (size / 640);
-        c.beginPath();
-        for (let li = 0; li < road.n; li += 3) { const s = W.samples[road.i0 + li]; if (li === 0) c.moveTo(X(s.p.x), Z(s.p.z)); else c.lineTo(X(s.p.x), Z(s.p.z)); }
-        if (road.closed) c.closePath();
-        c.strokeStyle = 'rgba(0,0,0,0.45)'; c.lineWidth = wpx + 2; c.stroke();
-        c.strokeStyle = road.kind === 'dirt' ? '#c9ad7a' : road.kind === 'highway' ? '#f4f4f4' : '#dcdcdc'; c.lineWidth = wpx; c.stroke();
-      }
-      this.mapLayer = off;
-    }
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, size, size);
-    ctx.drawImage(this.mapLayer, 0, 0);
-    const k = size / 640;
-    for (const b of W.boards) {
-      if (this.prog.boards.includes(b.id)) continue;
-      ctx.fillStyle = '#3ddc84'; ctx.fillRect(X(b.x) - 2.5 * k, Z(b.z) - 2.5 * k, 5 * k, 5 * k);
-    }
-    for (const m of W.markers) drawMarkerIcon(ctx, X(m.x), Z(m.z), m, this, selected === m, k);
-    if (this.waypoint) {
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 * k; ctx.setLineDash([4 * k, 4 * k]);
-      ctx.beginPath(); ctx.moveTo(X(this.car.pos.x), Z(this.car.pos.z)); ctx.lineTo(X(this.waypoint.x), Z(this.waypoint.z)); ctx.stroke(); ctx.setLineDash([]);
-    }
-    // player
-    const px = X(this.car.pos.x), pz = Z(this.car.pos.z);
-    ctx.save(); ctx.translate(px, pz); ctx.rotate(this.car.heading + Math.PI);
-    ctx.fillStyle = '#ff5a1f'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 * k;
-    ctx.beginPath(); ctx.moveTo(0, -9 * k); ctx.lineTo(6 * k, 7 * k); ctx.lineTo(0, 3 * k); ctx.lineTo(-6 * k, 7 * k); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.restore();
+  // ------------------------------------------------------------ GPS
+  setWaypoint(marker) {
+    this.waypoint = marker || null;
+    this.routeTimer = 0;
+    this._updateRoute();
   }
 
-  /** Marker closest to a canvas point (within 16 px), or null. */
-  markerAt(canvas, px, py) {
-    const size = canvas.width, sc = size / (WORLD_HALF * 2);
-    let best = null, bd = 16 * (size / 640);
-    for (const m of this.world.markers) {
-      const d = Math.hypot((m.x + WORLD_HALF) * sc - px, (m.z + WORLD_HALF) * sc - py);
-      if (d < bd) { bd = d; best = m; }
-    }
-    return best;
+  _updateRoute() {
+    const wp = this.waypoint;
+    if (!wp || wp.idx === undefined) { this.route = null; this.routeIdx = null; return; }
+    this.route = this.world.route(this.car.trackIdx, wp.idx);
+    this.routeIdx = this.world.routeIndices(this.route, 2);
+  }
+
+  /**
+   * The next instruction on the route: { text, dist (m), turn: left|right|ahead|back|arrive }.
+   */
+  routeGuide() {
+    const r = this.route, W = this.world, car = this.car;
+    if (!r || !r.legs.length) return null;
+    const legs = r.legs, l0 = legs[0], road0 = W.roads[l0.road];
+    // driving the wrong way along the first leg?
+    const s0 = W.samples[W.roadWrap(road0, road0.i0 + l0.from, true)];
+    const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
+    const along = (s0.t.x * fx + s0.t.z * fz) * l0.dir;
+    if (along < -0.3 && r.length > 60) return { text: 'Turn around', dist: 0, turn: 'back' };
+    if (legs.length === 1) return { text: r.length < 120 ? 'Arriving' : `Follow ${road0.name}`, dist: r.length, turn: r.length < 120 ? 'arrive' : 'ahead' };
+    const l1 = legs[1], road1 = W.roads[l1.road];
+    const hAt = (road, li, dir) => { const s = W.samples[W.roadWrap(road, road.i0 + li, true)]; return s.heading + (dir < 0 ? Math.PI : 0); };
+    const h0 = hAt(road0, l0.from + l0.dir * Math.max(0, l0.len - 6), l0.dir);
+    const h1 = hAt(road1, l1.from + l1.dir * Math.min(l1.len, 8), l1.dir);
+    let d = h1 - h0;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    const turn = Math.abs(d) < 0.35 ? 'ahead' : d < 0 ? 'right' : 'left';
+    const text = turn === 'ahead' ? `Continue onto ${road1.name}` : `Turn ${turn} onto ${road1.name}`;
+    return { text, dist: l0.len * W.spacing, turn };
   }
 
   render() {
@@ -808,15 +803,49 @@ export class Horizon {
     this.fx.dispose();
     this.input.setTouchVisible(false);
     if (this.envTex) this.envTex.dispose();
-    disposeGroup(this.scene);
+    disposeGroup(this.scene, true);
   }
 }
 
 // ------------------------------------------------------------------ Helpers
-function disposeGroup(root) {
+/**
+ * Runs of consecutive local sample indices along a road where `keep(li)` holds, as
+ * [from, to] pairs (inclusive, sharing their end samples so strips join up). A loop's
+ * run may continue past N - 1 (indices are taken modulo N).
+ */
+function runs(road, keep) {
+  const N = road.n, last = road.closed ? N : N - 1;
+  const out = [];
+  let start = -1;
+  for (let li = 0; li <= last; li++) {
+    const k = keep(li % N);
+    if (k && start < 0) start = li;
+    if ((!k || li === last) && start >= 0) {
+      // a run ends on the first excluded sample so neighbouring strips share it and meet
+      if (li > start) out.push([start, li]);
+      start = -1;
+    }
+  }
+  // a loop whose run wraps through index 0: join the last run onto the first
+  if (road.closed && out.length > 1 && out[0][0] === 0 && out[out.length - 1][1] === last) {
+    const tail = out.pop();
+    out[0] = [tail[0], out[0][1] + N];
+  }
+  return out;
+}
+
+/** Free a group's GPU resources, keeping geometry, materials and textures marked shared. */
+function disposeGroup(root, all = false) {
   root.traverse(o => {
-    if (o.geometry) o.geometry.dispose();
-    if (o.material) { const ms = Array.isArray(o.material) ? o.material : [o.material]; for (const m of ms) { if (m.map && !m.userData.shared) m.map.dispose(); m.dispose(); } }
+    if (o.geometry && (all || !o.geometry.userData.shared)) o.geometry.dispose();
+    if (o.material) {
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of ms) {
+        if (!all && m.userData.shared) continue;
+        if (m.map && (all || !m.map.userData.shared)) m.map.dispose();
+        m.dispose();
+      }
+    }
   });
 }
 
@@ -836,9 +865,12 @@ function groundColor(W, x, z, h, out) {
   add(tmpC.copy(C.desert).lerp(C.desertAlt, n), w.desert);
   add(tmpC.copy(C.rock).lerp(C.snow, smoothstep(150, 200, h)), w.alpine);
   add(C.city, w.city);
-  const beach = smoothstep(SEA_Z - 160, SEA_Z - 40, z);
-  add(tmpC.copy(C.coast).lerp(C.sand, beach), w.coast);
-  if (z > SEA_Z) out.lerp(C.seabed, smoothstep(SEA_Z, SEA_Z + 120, z));
+  add(C.coast, w.coast);
+  // beaches all round the island (rocky under the mountains), sea bed beyond
+  const cd = coastDist(x, z);
+  const beach = 1 - smoothstep(25, 120, cd);
+  if (beach > 0) out.lerp(tmpC.copy(C.sand).lerp(C.rock, w.alpine * 0.85), beach);
+  if (cd < 0) out.lerp(C.seabed, smoothstep(0, -120, cd));
   out.multiplyScalar(0.92 + n * 0.16);
 }
 
@@ -965,32 +997,6 @@ function makeFacadeTexture(baseHex) {
   t.colorSpace = THREE.SRGBColorSpace;
   t.userData.shared = true;
   return t;
-}
-
-/** Map icon for a marker. */
-export function drawMarkerIcon(ctx, x, y, m, hz, selected, k = 1) {
-  const done = m.kind === 'event' ? !!hz.prog.events[m.id] : (m.kind === 'hub' ? false : hz._stars((hz.prog[m.kind + 's'] || {})[m.id] || 0, m.stars) === 3);
-  ctx.save();
-  ctx.translate(x, y);
-  if (selected) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 * k; ctx.beginPath(); ctx.arc(0, 0, 13 * k, 0, Math.PI * 2); ctx.stroke(); }
-  ctx.lineWidth = 1.5 * k; ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-  if (m.kind === 'hub') {
-    ctx.fillStyle = '#ffd23f';
-    ctx.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 4.5 * k : 10 * k, a = -Math.PI / 2 + i * Math.PI / 5; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r); } ctx.closePath(); ctx.fill(); ctx.stroke();
-  } else if (m.kind === 'event') {
-    ctx.fillStyle = done ? '#9a6a3a' : (m.track.kind === 'stage' ? '#3ddc84' : '#ff5a1f');
-    ctx.beginPath(); ctx.arc(0, 0, 8 * k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.fillRect(-1 * k, -5 * k, 1.6 * k, 10 * k); ctx.beginPath(); ctx.moveTo(0, -5 * k); ctx.lineTo(5 * k, -2.5 * k); ctx.lineTo(0, 0); ctx.fill();
-  } else if (m.kind === 'trap') {
-    ctx.fillStyle = done ? '#5a7a99' : '#2f7bff'; ctx.fillRect(-6 * k, -6 * k, 12 * k, 12 * k); ctx.strokeRect(-6 * k, -6 * k, 12 * k, 12 * k);
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, 2.6 * k, 0, Math.PI * 2); ctx.fill();
-  } else if (m.kind === 'drift') {
-    ctx.fillStyle = done ? '#7a5a99' : '#b04cff'; ctx.beginPath(); ctx.moveTo(0, -8 * k); ctx.lineTo(8 * k, 0); ctx.lineTo(0, 8 * k); ctx.lineTo(-8 * k, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
-  } else if (m.kind === 'zone') {
-    ctx.fillStyle = done ? '#4a8a92' : '#00d4ff'; ctx.beginPath(); ctx.roundRect(-8 * k, -5 * k, 16 * k, 10 * k, 3 * k); ctx.fill(); ctx.stroke();
-  }
-  if (done) { ctx.fillStyle = '#fff'; ctx.font = `${10 * k}px Arial`; ctx.textAlign = 'center'; ctx.fillText('✓', 0, 3.5 * k); }
-  ctx.restore();
 }
 
 export { REGIONS };

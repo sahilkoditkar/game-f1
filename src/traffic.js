@@ -80,7 +80,8 @@ export class Traffic {
     const a = W.samples[road.i0 + i0], b = W.samples[W.roadWrap(road, road.i0 + i0 + 1, true)];
     const px = a.p.x + (b.p.x - a.p.x) * u, pz = a.p.z + (b.p.z - a.p.z) * u, py = a.p.y + (b.p.y - a.p.y) * u;
     const nx = a.n.x + (b.n.x - a.n.x) * u, nz = a.n.z + (b.n.z - a.n.z) * u;
-    car.pos.set(px + nx * car.lat, py + road.yOff + 0.02, pz + nz * car.lat);
+    const tilt = a.yl !== undefined ? W.surfaceAt(a, car.lat) - a.p.y : 0;   // junctions: lie on the major road
+    car.pos.set(px + nx * car.lat, py + tilt + road.yOff + 0.02, pz + nz * car.lat);
     let h = Math.atan2(a.t.x, a.t.z) + (car.dir < 0 ? Math.PI : 0);
     // steer visually toward the lane change
     const dLat = (car.lane - car.lat) * car.dir;
