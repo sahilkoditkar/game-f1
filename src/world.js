@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { sampleSpline } from './track.js';
 import { THEMES } from './tracks.js';
 import {
-  ROADS, REGIONS, EVENTS, TRAPS, DRIFTS, SPEEDZONES, BOARD_COUNT, WORLD_HALF, SEA_LEVEL, CITY, COAST, CHAMPIONSHIPS, GARAGES,
+  ROADS, REGIONS, EVENTS, TRAPS, DRIFTS, SPEEDZONES, BOARD_COUNT, WORLD_HALF, SEA_LEVEL, CITY, CITY_OUTSKIRTS, CITY_PLAZAS, cityNode, COAST, CHAMPIONSHIPS, GARAGES,
 } from './worlddef.js';
 import { getTrack } from './tracks.js';
 import { getSeries } from './data.js';
@@ -192,7 +192,7 @@ export class World {
    * short of it or overshooting.
    */
   _snapEndpoints() {
-    const sampled = ROADS.map(def => ({ def, pts: sampleSpline(def.points, SPACING * 2, !def.closed) }));
+    const sampled = ROADS.map(def => ({ def, pts: sampleSpline(def.points, SPACING * 2, !def.closed, def.straight) }));
     const SNAP = 230, EDGE = WORLD_HALF - 120;
     const RANK = { highway: 4, road: 3, street: 2, lane: 1, dirt: 0 };
     return sampled.map(({ def, pts }, ri) => {
@@ -242,7 +242,7 @@ export class World {
     this.samples = [];
     for (const def of this._snapEndpoints()) {
       const closed = !!def.closed;
-      const pts = sampleSpline(def.points, SPACING, !closed);
+      const pts = sampleSpline(def.points, SPACING, !closed, def.straight);
       const N = pts.length;
       const i0 = this.samples.length;
       const road = { def, id: def.id, name: def.name, kind: def.kind, width: def.width, closed, i0, i1: i0 + N - 1, n: N, length: N * SPACING, yOff: 0.10 + this.roads.length * 0.0025 };
@@ -942,28 +942,61 @@ export class World {
 
   // ------------------------------------------------------------ City
   /**
-   * Buildings on whatever land the city's streets leave free: candidates on a loose
-   * grid, each turned to face its nearest street, kept clear of every road and of
-   * each other. Taller towards the centre. Shared by the 3D world and the maps.
+   * Buildings on whatever land the city's streets leave free, each turned to face its
+   * nearest street and kept a pavement's width off every road. A loose grid sets the
+   * general layout, then an infill sweep puts a building (a smaller one if need be) in
+   * every spot still big enough for one, so blocks are packed with an even gap between
+   * buildings, except for a few small tree-lined squares (CITY_PLAZAS). Taller towards
+   * the centre; the outskirts, one row along the outside of the outer streets, are low
+   * warehouses (all along the coast side) and shops. Shared by the 3D world and the maps.
    */
   _buildCity() {
     this.buildings = [];
-    const rand = mulberry32(777);
-    const STEP = 28;
-    for (let gx = CITY.x0 - 20; gx <= CITY.x1 + 20; gx += STEP) for (let gz = CITY.z0 - 20; gz <= CITY.z1 + 20; gz += STEP) {
-      const x = gx + (rand() - 0.5) * 7, z = gz + (rand() - 0.5) * 7;
-      const w = 14 + rand() * 14, d = 14 + rand() * 14;
-      const plaza = rand() < 0.08, hr = rand(), mat = rand();
-      if (plaza) continue;
-      const near = this.nearestGlobal(x, z, 2);
-      if (near.idx < 0) continue;
+    this.plazas = CITY_PLAZAS.map(([i, j]) => {
+      const c = [cityNode(i, j), cityNode(i + 1, j), cityNode(i, j + 1), cityNode(i + 1, j + 1)];
+      return { x: c.reduce((a, p) => a + p[0], 0) / 4, z: c.reduce((a, p) => a + p[1], 0) / 4, r: 30 };
+    });
+    const SCALE = 1.9;                  // footprint size (the grid spreads out to match)
+    const GAP = 5;                      // clear ground between neighbouring buildings
+    const M = CITY_OUTSKIRTS;
+    /** Put a building here if it fits; true if it did. */
+    const tryPlace = (x, z, w, d, hr, mat) => {
+      const near = this.nearestGlobal(x, z, 3);
+      if (near.idx < 0) return false;
       const s = this.samples[near.idx];
       const half = Math.hypot(w, d) / 2;
-      if (near.dist - s.hw - 4.5 < half * 0.78) continue;         // keep a pavement's width off the road
-      if (this.buildings.some(b => Math.hypot(b.x - x, b.z - z) < (b.r + half) * 0.8)) continue;
+      if (near.dist - s.hw - 4.5 < half * 0.78) return false;          // keep a pavement's width off the road
+      // the outskirts are one row along each side: none diagonally past the rounded corners
+      const outX = x < CITY.x0 || x > CITY.x1, outZ = z < CITY.z0 || z > CITY.z1, outskirts = outX || outZ;
+      if ((outX && outZ) || (outskirts && near.dist - s.hw > M)) return false;
+      if (this.buildings.some(b => Math.hypot(b.x - x, b.z - z) < (b.r + half) * 0.8 + GAP)) return false;
+      if (this.plazas.some(q => Math.hypot(q.x - x, q.z - z) < q.r + half * 0.7)) return false;
+      // leave room for the garages placed later (Apex Motors stands on the outskirts)
+      if (GARAGES.some(g => g.at && Math.hypot(g.at[0] - x, g.at[1] - z) < 80 + half)) return false;
       const dc = Math.hypot(x - CITY.cx, z - CITY.cz);
-      const h = dc < 230 ? 45 + hr * 90 : dc < 420 ? 18 + hr * 42 : 9 + hr * 18;
-      this.buildings.push({ x, z, w, d, h, hw: w / 2, hd: d / 2, r: half, rot: s.heading, mat });
+      const style = !outskirts ? 'office' : z > CITY.z1 || hr < 0.4 ? 'warehouse' : 'shop';
+      const h = style === 'warehouse' ? 7 + hr * 6 : style === 'shop' ? 6 + hr * 10
+        : dc < 230 ? 45 + hr * 90 : dc < 420 ? 18 + hr * 42 : 9 + hr * 18;
+      this.buildings.push({ x, z, w, d, h, hw: w / 2, hd: d / 2, r: half, rot: s.heading, mat, style });
+      return true;
+    };
+    // 1. A loose grid, centred on the city, with a few gaps left for plazas
+    const rand = mulberry32(777), STEP = 28 * SCALE;
+    const KX = Math.floor(((CITY.x1 - CITY.x0) / 2 + M) / STEP), KZ = Math.floor(((CITY.z1 - CITY.z0) / 2 + M) / STEP);
+    for (let kx = -KX; kx <= KX; kx++) for (let kz = -KZ; kz <= KZ; kz++) {
+      const x = CITY.cx + kx * STEP + (rand() - 0.5) * 7 * SCALE, z = CITY.cz + kz * STEP + (rand() - 0.5) * 7 * SCALE;
+      const w = (14 + rand() * 14) * SCALE, d = (14 + rand() * 14) * SCALE;
+      const plaza = rand() < 0.08, hr = rand(), mat = rand();
+      if (!plaza) tryPlace(x, z, w, d, hr, mat);
+    }
+    // 2. Infill wherever a building still fits (streets moved, blocks merged, the outskirts):
+    //    big buildings everywhere first, then medium, and small ones only in what is left
+    const fill = mulberry32(4242);
+    for (const [lo, hi, FILL] of [[24, 28, 12], [18, 24, 10], [14, 18, 8], [14, 14, 6]]) {
+      for (let x = CITY.x0 - M; x <= CITY.x1 + M; x += FILL) for (let z = CITY.z0 - M; z <= CITY.z1 + M; z += FILL) {
+        const hr = fill(), mat = fill(), w = (lo + fill() * (hi - lo)) * SCALE, d = (lo + fill() * (hi - lo)) * SCALE;
+        tryPlace(x, z, w, d, hr, mat);
+      }
     }
   }
 

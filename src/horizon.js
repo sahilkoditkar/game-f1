@@ -14,7 +14,7 @@ import { getCar, getSeries, PLAYER_COLORS } from './data.js';
 import { getTrack } from './tracks.js';
 import { playerStats, seriesState, seriesLock } from './career.js';
 import { getControl } from './input.js';
-import { WORLD_HALF, SEA_Z, SEA_LEVEL, CITY, BOARD_XP, REGIONS, levelForXp } from './worlddef.js';
+import { WORLD_HALF, SEA_Z, SEA_LEVEL, CITY, CITY_OUTSKIRTS, BOARD_XP, REGIONS, levelForXp } from './worlddef.js';
 import { crashShake } from './crash.js';
 
 const CHUNK = 200;        // metres
@@ -436,7 +436,8 @@ export class Horizon {
 
     const chunk = { group, x: x0, z: z0, buildings: [] };
     const rand = mulberry32(cx * 73856093 ^ cz * 19349663 ^ 0x5bd1e995);
-    const inCity = x0 > CITY.x0 - 150 && x0 < CITY.x1 + 150 && z0 > CITY.z0 - 150 && z0 < CITY.z1 + 150;
+    const cityPad = CITY_OUTSKIRTS + CHUNK / 2 + 30;   // any chunk that can hold a city building
+    const inCity = x0 > CITY.x0 - cityPad && x0 < CITY.x1 + cityPad && z0 > CITY.z0 - cityPad && z0 < CITY.z1 + cityPad;
 
     // Trees
     const region = W.regionAt(x0, z0).id;
@@ -473,8 +474,11 @@ export class Horizon {
     const W = this.world;
     if (!this.facadeMats) {
       this.facadeMats = [0x9aa4b4, 0x6f8aa8, 0xb9ad98, 0x7c7f88].map(c => new THREE.MeshStandardMaterial({ map: makeFacadeTexture(c), roughness: 0.55, metalness: 0.15 }));
+      // the outskirts: corrugated warehouses and brick shopfronts
+      this.warehouseMats = [0x8e9aa3, 0x6d7f74, 0xa58b6a].map(c => new THREE.MeshStandardMaterial({ map: makeWarehouseTexture(c), roughness: 0.7, metalness: 0.25 }));
+      this.shopMats = [0x9a5a44, 0xb9a27e, 0x7a6e66].map(c => new THREE.MeshStandardMaterial({ map: makeShopTexture(c), roughness: 0.8, metalness: 0.05 }));
       this.roofMat = new THREE.MeshStandardMaterial({ color: 0x4a4d55, roughness: 1 });
-      for (const m of [...this.facadeMats, this.roofMat]) m.userData.shared = true;   // reused by every city chunk
+      for (const m of [...this.facadeMats, ...this.warehouseMats, ...this.shopMats, this.roofMat]) m.userData.shared = true;   // reused by every city chunk
     }
     const holder = new THREE.Group();   // merged per material below: one draw call per facade
     for (const b of W.buildings) {
@@ -485,9 +489,13 @@ export class Horizon {
       for (let v = 0; v < uv.count; v++) {
         const face = Math.floor(v / 4);
         const su = face < 2 ? d : face < 4 ? w : w, sv = face < 2 ? h : face < 4 ? d : h;
-        uv.setXY(v, uv.getX(v) * su / 4, uv.getY(v) * sv / 3.6);
+        // office facades repeat a 4 m × 3.6 m window bay; outskirts walls take their texture
+        // once over the full height (a shopfront at street level), every 10 m along
+        if (b.style === 'office' || !b.style) uv.setXY(v, uv.getX(v) * su / 4, uv.getY(v) * sv / 3.6);
+        else uv.setXY(v, uv.getX(v) * su / 10, uv.getY(v) * (face < 2 || face > 3 ? 1 : sv / 10));
       }
-      const facade = this.facadeMats[Math.floor(b.mat * this.facadeMats.length)];
+      const mats = b.style === 'warehouse' ? this.warehouseMats : b.style === 'shop' ? this.shopMats : this.facadeMats;
+      const facade = mats[Math.floor(b.mat * mats.length)];
       const m = new THREE.Mesh(geo, [facade, facade, this.roofMat, this.roofMat, facade, facade]);
       const gy = W.terrainHeight(b.x, b.z);
       m.position.set(b.x, gy + h / 2 - 0.4, b.z);
@@ -497,6 +505,17 @@ export class Horizon {
     }
     mergeByMaterial(chunk.group, holder);
     holder.traverse(o => { if (o.isMesh) o.geometry.dispose(); });
+    // the squares: a ring of trees round each one
+    const trees = [];
+    for (const q of W.plazas) {
+      if (Math.abs(q.x - x0) > CHUNK / 2 || Math.abs(q.z - z0) > CHUNK / 2) continue;
+      for (let k = 0; k < 9; k++) {
+        const a = (k / 9) * Math.PI * 2, rr = k % 3 === 0 ? q.r * 0.35 : q.r * 0.75;
+        const x = q.x + Math.cos(a) * rr, z = q.z + Math.sin(a) * rr;
+        trees.push([x, z, 0.8 + ((k * 37) % 10) / 25, a, W.terrainHeight(x, z)]);
+      }
+    }
+    if (trees.length) addTrees(chunk.group, 'round', trees, this.highQ);
   }
 
   // ------------------------------------------------------------ Game loop
@@ -1009,7 +1028,7 @@ function makeWorldRoadTexture(kind, width) {
     ctx.fillStyle = 'rgba(255,255,255,0.8)';
     ctx.fillRect(5, 0, 4, 256); ctx.fillRect(247, 0, 4, 256);
     if (kind === 'highway') {
-      ctx.fillStyle = 'rgba(255,210,60,0.9)'; ctx.fillRect(124, 0, 3, 256); ctx.fillRect(130, 0, 3, 256);
+      ctx.fillStyle = 'rgba(255,210,60,0.9)'; ctx.fillRect(126, 0, 4, 256);
       ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(62, 0, 3, 110); ctx.fillRect(190, 0, 3, 110);
     } else if (kind === 'street') {
       ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(126, 0, 4, 90);
@@ -1087,6 +1106,43 @@ function makeBoardTexture() {
   ctx.fillText('XP', 256, 150);
   ctx.font = '700 44px Arial'; ctx.fillText('BONUS BOARD', 256, 262);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.userData.shared = true;
+  return t;
+}
+
+/** Corrugated metal siding with a big loading door every so often. */
+function makeWarehouseTexture(baseHex) {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  const b = new THREE.Color(baseHex);
+  ctx.fillStyle = `rgb(${b.r * 255 | 0},${b.g * 255 | 0},${b.b * 255 | 0})`; ctx.fillRect(0, 0, 64, 64);
+  for (let x = 0; x < 64; x += 4) { ctx.fillStyle = 'rgba(0,0,0,0.14)'; ctx.fillRect(x, 0, 1, 64); ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x + 2, 0, 1, 64); }
+  ctx.fillStyle = 'rgba(40,44,50,0.9)'; ctx.fillRect(18, 34, 28, 30);              // loading door
+  ctx.fillStyle = 'rgba(255,255,255,0.15)'; for (let y = 36; y < 64; y += 4) ctx.fillRect(18, y, 28, 1);
+  ctx.fillStyle = 'rgba(255,200,60,0.85)'; ctx.fillRect(0, 30, 64, 2);             // safety stripe
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.userData.shared = true;
+  return t;
+}
+
+/** Brick with a lit shopfront and an awning on the ground floor. */
+function makeShopTexture(baseHex) {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  const b = new THREE.Color(baseHex);
+  ctx.fillStyle = `rgb(${b.r * 255 | 0},${b.g * 255 | 0},${b.b * 255 | 0})`; ctx.fillRect(0, 0, 64, 64);
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  for (let y = 0; y < 64; y += 4) { ctx.fillRect(0, y, 64, 1); for (let x = (y / 4) % 2 ? 0 : 4; x < 64; x += 8) ctx.fillRect(x, y, 1, 4); }
+  ctx.fillStyle = 'rgba(255,236,190,0.9)'; ctx.fillRect(4, 40, 56, 22);             // shop window
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(30, 40, 3, 22);
+  const awning = ['#d1453b', '#2f7fb5', '#3a9a5b'][Math.floor(Math.random() * 3)];
+  ctx.fillStyle = awning; ctx.fillRect(0, 34, 64, 6);
+  ctx.fillStyle = 'rgba(30,40,60,0.85)'; for (const x of [10, 38]) ctx.fillRect(x, 10, 14, 12);   // upstairs windows
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.userData.shared = true;
   return t;
 }
 
