@@ -11,13 +11,19 @@ function catmullRom(p0, p1, p2, p3, t) {
   ];
 }
 
-/** Sample a Catmull-Rom spline (closed loop, or open point-to-point) into uniformly spaced 2D points. */
-export function sampleSpline(points, spacing = SPACING, open = false) {
+/**
+ * Sample a Catmull-Rom spline (closed loop, or open point-to-point) into uniformly spaced 2D points.
+ * `straight` (open only) lists segments, by the index of their first point, drawn as a straight line.
+ */
+export function sampleSpline(points, spacing = SPACING, open = false, straight = []) {
   const n = points.length;
   const raw = [];
   if (open) {
     const g = (i) => points[Math.max(0, Math.min(n - 1, i))];
-    for (let i = 0; i < n - 1; i++) for (let k = 0; k < 24; k++) raw.push(catmullRom(g(i - 1), g(i), g(i + 1), g(i + 2), k / 24));
+    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    for (let i = 0; i < n - 1; i++) for (let k = 0; k < 24; k++) {
+      raw.push(straight.includes(i) ? lerp(g(i), g(i + 1), k / 24) : catmullRom(g(i - 1), g(i), g(i + 1), g(i + 2), k / 24));
+    }
     raw.push(points[n - 1]);
     const out = [raw[0]];
     let carry = 0;

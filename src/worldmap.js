@@ -758,7 +758,9 @@ export class WorldMap {
     ctx.drawImage(this.terrain, -MAP_EXTENT, -MAP_EXTENT, MAP_EXTENT * 2, MAP_EXTENT * 2);
     const tl = this.toWorld(-40, -40), br = this.toWorld(this.w + 40, this.h + 40);
     const view = { x0: tl.x, z0: tl.z, x1: br.x, z1: br.z };
-    // city blocks
+    // city squares, then the blocks
+    ctx.fillStyle = 'rgb(78,128,70)';
+    for (const q of W.plazas) { ctx.beginPath(); ctx.arc(q.x, q.z, q.r, 0, Math.PI * 2); ctx.fill(); }
     for (const b of W.buildings) {
       if (b.x < view.x0 - 60 || b.x > view.x1 + 60 || b.z < view.z0 - 60 || b.z > view.z1 + 60) continue;
       const tone = 150 + Math.min(80, b.h * 0.6);
