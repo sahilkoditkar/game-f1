@@ -52,7 +52,7 @@ function ring(n = 20) {
 // ------------------------------------------------------------------ Apex City
 // Six north-south and six east-west streets on uneven spacing, every crossing
 // nudged a little so blocks are not perfect squares, two streets that stop short
-// at a T, and seven ways in and out. Deterministic, so the map never changes.
+// and curve into each other, and six ways in and out. Deterministic, so the map never changes.
 const CITY_COLS = [1500, 1655, 1830, 1990, 2170, 2325];   // x of the north-south streets
 const CITY_ROWS = [1300, 1462, 1630, 1790, 1962, 2125];   // z of the east-west streets
 export const CITY = {
@@ -72,11 +72,40 @@ function node(i, j) {
   return [Math.round(CITY_COLS[i] + cityRand(i, j, 1) * k), Math.round(CITY_ROWS[j] + cityRand(i, j, 2) * k)];
 }
 const off = (p, dx, dz) => [p[0] + dx, p[1] + dz];
+/** A cubic Bézier from p0 to p3 (pulled toward p1, p2), as a function of t in [0, 1]. */
+const bezier = (p0, p1, p2, p3) => (t) => {
+  const u = 1 - t, b0 = u * u * u, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t * t * t;
+  return [0, 1].map(c => Math.round(b0 * p0[c] + b1 * p1[c] + b2 * p2[c] + b3 * p3[c]));
+};
 
 function cityStreets() {
   const NS = ['Harbour St', 'Festival Ave', 'Apex Blvd', 'North Gate Rd', 'Dock Lane', 'Skyline Dr'];
   const EW = ['Grand Avenue', 'Market St', 'Union St', 'Harbour Road', 'Beacon St', 'Cannery Row'];
-  // which rows / columns each street spans (two stop short at a T-junction)
+  // Festival Ave and Beacon St stop short and sweep into each other: one quarter-ellipse
+  // arc from Festival Ave heading south to Beacon St heading east, each street taking
+  // half, so they meet mid-bend
+  const S = node(1, 3), E = node(2, 4);
+  const kx = 0.55 * (E[0] - S[0]), kz = 0.55 * (E[1] - S[1]);   // 0.55: a near-circular bend
+  const arc = bezier(S, off(S, 0, kz), off(E, -kx, 0), E);
+  const arcFestival = [0.125, 0.25, 0.375, 0.5].map(arc);
+  const arcBeacon = [0.5, 0.625, 0.75, 0.875].map(arc);
+  // The four outer corners are rounded: a quarter-circle from CORNER_R before the crossing
+  // (travelling dIn) to CORNER_R after it (travelling dOut). Where both streets end at the
+  // corner they share it, half each; where one runs on out of the city, the other takes it all.
+  const CORNER_R = 60;
+  const corner = (c, dIn, dOut) => {
+    const k = 0.55 * CORNER_R;
+    const p0 = off(c, -dIn[0] * CORNER_R, -dIn[1] * CORNER_R), p3 = off(c, dOut[0] * CORNER_R, dOut[1] * CORNER_R);
+    return bezier(p0, off(p0, dIn[0] * k, dIn[1] * k), off(p3, -dOut[0] * k, -dOut[1] * k), p3);
+  };
+  const ne = corner(node(5, 0), [1, 0], [0, 1]);    // Grand Avenue into Skyline Dr
+  const sw = corner(node(0, 5), [0, 1], [1, 0]);    // Harbour St into Cannery Row
+  const nw = corner(node(0, 0), [-1, 0], [0, 1]);   // Harbour St leaves Grand Avenue, which runs on west
+  const se = corner(node(5, 5), [1, 0], [0, -1]);   // Cannery Row into Skyline Dr
+  const firstHalf = [0, 0.25, 0.5], secondHalf = [0.5, 0.75, 1], whole = [0, 0.25, 0.5, 0.75, 1];
+  // ends that meet another street's end (not snapped onto a nearby road)
+  const freeEnds = { ns0: ['end'], ns1: ['end'], ns5: ['start', 'end'], ew0: ['end'], ew4: ['start'], ew5: ['start', 'end'] };
+  // which rows / columns each street spans
   const nsSpan = [[0, 5], [0, 3], [0, 5], [0, 5], [1, 5], [0, 5]];
   const ewSpan = [[0, 5], [0, 5], [0, 5], [0, 5], [2, 5], [0, 5]];
   const out = [];
@@ -87,10 +116,14 @@ function cityStreets() {
     // the outer streets carry on a little past the corners so the corners meet cleanly
     if (a === 0) pts.unshift(off(pts[0], 0, -26)); else pts.unshift(off(pts[0], 0, -8));
     if (b === 5) pts.push(off(pts[pts.length - 1], 0, 26)); else pts.push(off(pts[pts.length - 1], 0, 8));
-    if (i === 2) pts.splice(pts.length - 1, 1, off(node(2, 5), -4, 90), [node(2, 5)[0] - 12, 2300]);   // south to the coast highway
-    if (i === 5) pts.splice(pts.length - 1, 1, off(node(5, 5), 6, 70), [node(5, 5)[0] + 10, 2262]);    // south to the coast highway
-    if (i === 3) pts.splice(0, 1, [1822, 718], [1905, 960], off(node(3, 0), -22, -160));                 // north out to the ring road
-    out.push({ id: `st-ns${i}`, name: NS[i], kind: 'street', width: 13, points: pts });
+    if (i === 3) pts.splice(pts.length - 1, 1, [node(2, 5)[0] + 35, 2300]);                         // south to the coast highway
+    if (i === 3) pts.splice(0, 1, [1755, 834], [1905, 960], off(node(3, 0), -22, -160));                 // north out to the ring road, meeting Sunflower Lane
+    if (i === 1) pts.splice(pts.length - 1, 1, ...arcFestival);                                            // curves round into Beacon St
+    if (i === 0) pts.splice(0, 2, ...whole.map(nw));                                                       // rounded north-west corner
+    if (i === 0) pts.splice(pts.length - 2, 2, ...firstHalf.map(sw));                                      // rounded south-west corner
+    if (i === 5) pts.splice(0, 2, ...secondHalf.map(ne));                                                  // rounded north-east corner
+    if (i === 5) pts.splice(pts.length - 2, 2, ...secondHalf.map(se).reverse());                           // rounded south-east corner
+    out.push({ id: `st-ns${i}`, name: NS[i], kind: 'street', width: 13, points: pts, ...(freeEnds[`ns${i}`] && { freeEnds: freeEnds[`ns${i}`] }) });
   }
   for (let j = 0; j < 6; j++) {
     const [a, b] = ewSpan[j];
@@ -99,10 +132,14 @@ function cityStreets() {
     if (a === 0) pts.unshift(off(pts[0], -26, 0)); else pts.unshift(off(pts[0], -8, 0));
     pts.push(off(pts[pts.length - 1], 26, 0));
     if (j === 0) pts.splice(0, 1, [1262, 1290], off(node(0, 0), -110, -4));        // west to the ring road
-    if (j === 2) pts.splice(pts.length - 1, 1, off(node(5, 2), 170, 10), [2726, node(5, 2)[1] + 6]);   // east to the coast highway
+    if (j === 3) pts.splice(pts.length - 1, 1, [2726, node(5, 2)[1] + 6]);                               // east to the coast highway
     if (j === 4) pts.splice(pts.length - 1, 1, off(node(5, 4), 160, -6), [2694, node(5, 4)[1] - 4]);  // east to the coast highway
     if (j === 3) pts.splice(0, 1, [180, 1958], [430, 1965], [820, 1935], [1250, 1830]);                   // west across the farms to Meridian Road
-    out.push({ id: `st-ew${j}`, name: EW[j], kind: 'street', width: 13, points: pts });
+    if (j === 4) pts.splice(0, 1, ...arcBeacon);                                                           // curves round into Festival Ave
+    if (j === 0) pts.splice(pts.length - 2, 2, ...firstHalf.map(ne));                                      // rounded north-east corner
+    if (j === 5) pts.splice(0, 2, ...secondHalf.map(sw));                                                  // rounded south-west corner
+    if (j === 5) pts.splice(pts.length - 2, 2, ...firstHalf.map(se));                                      // rounded south-east corner
+    out.push({ id: `st-ew${j}`, name: EW[j], kind: 'street', width: 13, points: pts, ...(freeEnds[`ew${j}`] && { freeEnds: freeEnds[`ew${j}`] }) });
   }
   return out;
 }
@@ -110,6 +147,8 @@ function cityStreets() {
 /**
  * kind: highway (wide, dual carriageway look) | road (two-lane) | lane (narrow
  * country road) | dirt (gravel trail, no markings) | street (city, kerbs).
+ * freeEnds: ['start' | 'end'] ends that join another road's end and must not be
+ * snapped onto a nearby road (see World._snapEndpoints).
  */
 export const ROADS = [
   { id: 'ring', name: 'Horizon Ring', kind: 'highway', width: 20, closed: true, points: ring() },
@@ -146,7 +185,7 @@ export const ROADS = [
   { id: 'mesa', name: 'Mesa Road', kind: 'road', width: 14,
     points: [[100, -2150], [600, -2250], [1200, -2150], [1800, -1950], [2300, -1700], [2550, -1350]] },
   { id: 'sunflower', name: 'Sunflower Lane', kind: 'lane', width: 11,
-    points: [[180, 1300], [600, 1150], [950, 800], [1250, 700], [1500, 840]] },
+    points: [[180, 1300], [600, 1150], [950, 800], [1250, 700], [1755, 834]] },   // meets North Gate Rd on the ring
   { id: 'quarry', name: 'Quarry Track', kind: 'dirt', width: 9,
     points: [[-85, -500], [-450, -650], [-800, -1000], [-1250, -1350]] },
   ...cityStreets(),
@@ -192,11 +231,12 @@ export const CHAMPIONSHIPS = [
  * Garages on the island. Festival HQ (everything: buy, choose, upgrade, paint) sits just
  * past the festival start; the dealership only sells cars, the tuning shops only upgrade.
  * Like the championship venues, each moves along its road to a quiet stretch with room
- * for the building beside it.
+ * for the building beside it. `side` (1: left of the road's direction, -1: right) keeps
+ * a garage on that side; without it, whichever side has room.
  */
 export const GARAGES = [
   { id: 'hq', type: 'hq', name: 'Festival HQ' },
-  { id: 'dealer', type: 'dealer', name: 'Apex Motors', road: 'st-ew0', at: [1345, 1296] },
+  { id: 'dealer', type: 'dealer', name: 'Apex Motors', road: 'st-ew0', at: [1345, 1296], side: -1 },   // south of Grand Avenue
   { id: 'tune-mesa', type: 'tuning', name: 'Red Mesa Tuning', road: 'ew', at: [2150, -230] },
   { id: 'tune-coast', type: 'tuning', name: 'Shoreline Tuning', road: 'coast', at: [-1450, 2280] },
 ];

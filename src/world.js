@@ -202,6 +202,8 @@ export class World {
         const ex = points[end][0], ez = points[end][1];
         // roads running off the edge of the map are exits, not junctions
         if (Math.abs(ex) > EDGE || Math.abs(ez) > EDGE) continue;
+        // an end joined to another road's end stays where it is
+        if (def.freeEnds && def.freeEnds.includes(end === 0 ? 'start' : 'end')) continue;
         // Prefer a road of equal or higher standing (so a highway never bends to meet a lane);
         // if there is none in reach, any road will do (a city street ending on a country lane).
         // Only onto its interior, never onto its own ends.
@@ -785,7 +787,7 @@ export class World {
       for (let k = 0; k < road.n && !placed; k += 2) {
         for (const i of [this.roadWrap(road, start + k), this.roadWrap(road, start - k)]) {
           if (i < 0 || !quiet(i)) continue;
-          const side = [1, -1].find(sd => roomFor(def, i, sd));
+          const side = (def.side ? [def.side] : [1, -1]).find(sd => roomFor(def, i, sd));
           if (side) { make(def, i, side); placed = true; break; }
         }
       }
