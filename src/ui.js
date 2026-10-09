@@ -10,6 +10,12 @@ const hex = (c) => '#' + c.toString(16).padStart(6, '0');
 const money = (n) => `${Math.round(n).toLocaleString()} cr`;
 const ORD = (n) => n + (['th', 'st', 'nd', 'rd'][((n % 100) - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 
+// Browser-tab titles. The main menu keeps the full SEO title from index.html; other screens get
+// "<label> – Turbo Tour" via UI.show(html, { title }) and, while driving, from the race mode (UI.hide).
+const SEO_TITLE = document.title;
+const RACE_TITLES = { quick: 'Quick Race', split: 'Split Screen', timetrial: 'Time Trial', career: 'Championship', horizon: 'Free Roam Event' };
+const MODE_TITLES = { quick: 'Quick Race', split: 'Split Screen', timetrial: 'Time Trial' };
+
 export class UI {
   constructor(app) {
     this.app = app;
@@ -23,15 +29,73 @@ export class UI {
       this._padCount = pads.length;
       if (this.rerender && !this.el.classList.contains('empty')) this.rerender();
     });
+    this.initAbout();
+  }
+
+  /** Set the browser-tab title: '' restores the SEO title (main menu). */
+  setTitle(label) {
+    this._title = label;
+    document.title = label ? `${label} – Turbo Tour` : SEO_TITLE;
+  }
+
+  /** Title while a race or the open world is running (no menu on screen). */
+  _liveTitle() {
+    const app = this.app;
+    if (app.race) return RACE_TITLES[app.raceCtx && app.raceCtx.mode] || 'Race';
+    if (app.horizon) return 'Free Roam';
+    return this._title;
+  }
+
+  // ------------------------------------------------------------ About
+  /**
+   * The static <section id="about"> in index.html (crawlable, readable without JavaScript) is hidden
+   * by main.js on start-up and shown as an overlay from the main menu's "About Turbo Tour" button.
+   */
+  initAbout() {
+    const about = this.aboutEl = document.getElementById('about');
+    if (!about) return;
+    about.classList.add('hidden');
+    const panel = about.querySelector('.about-panel');
+    const back = document.createElement('button');
+    back.type = 'button'; back.className = 'small ghost about-back'; back.textContent = '← Back';
+    const done = document.createElement('div');
+    done.className = 'row end about-done';
+    done.innerHTML = '<button type="button" class="primary">Back to the menu</button>';
+    panel.prepend(back);
+    panel.append(done);
+    for (const b of [back, done.firstElementChild]) b.addEventListener('click', () => { this.app.audio.click(); this.closeAbout(); });
+    about.addEventListener('click', (e) => { if (e.target === about) this.closeAbout(); });
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && this.aboutOpen) { e.preventDefault(); this.closeAbout(); } });
+  }
+
+  openAbout() {
+    if (!this.aboutEl) return;
+    this.aboutOpen = true;
+    this.aboutEl.classList.remove('hidden');
+    this.aboutEl.scrollTop = 0;
+    document.title = 'About – Turbo Tour';
+    const back = this.aboutEl.querySelector('.about-back');
+    if (back) back.focus({ preventScroll: true });
+  }
+
+  closeAbout() {
+    if (!this.aboutEl || !this.aboutOpen) return;
+    this.aboutOpen = false;
+    this.aboutEl.classList.add('hidden');
+    this.setTitle(this._title);
   }
 
   hide() {
     if (this.worldMap) { this.worldMap.dispose(); this.worldMap = null; }
     this.el.innerHTML = ''; this.el.classList.add('empty'); this.el.classList.remove('fullbleed'); this.rerender = null; this.mapOpen = false;
+    this.closeAbout();
+    // the caller usually starts or resumes a race / the world right after hiding the menu
+    queueMicrotask(() => { if (this.el.classList.contains('empty')) this.setTitle(this._liveTitle()); });
   }
 
-  show(html, { transparent = false } = {}) {
+  show(html, { transparent = false, title } = {}) {
     if (this.worldMap) { this.worldMap.dispose(); this.worldMap = null; }
+    if (title !== undefined) this.setTitle(title);
     this.el.classList.remove('empty', 'fullbleed');
     this.el.classList.toggle('transparent', transparent);
     this.el.innerHTML = html;
@@ -54,7 +118,7 @@ export class UI {
     this.rerender = null;
     this.show(`
       <div class="panel narrow">
-        <div class="logo">APEX <span>RUSH</span></div>
+        <div class="logo">TURBO <span>TOUR</span></div>
         <div class="tagline">3D arcade racing · open world · split screen</div>
         ${this._walletBar()}
         <div class="menu">
@@ -64,17 +128,20 @@ export class UI {
           <button data-go="split">Split Screen <span class="hint">2 players, one screen</span></button>
           <button data-go="timetrial">Time Trial <span class="hint">Beat your best laps</span></button>
           <button data-go="settings" class="ghost">Settings &amp; Controls</button>
+          <button data-go="about" class="ghost">About Turbo Tour <span class="hint">Features, controls, FAQ</span></button>
         </div>
         <div class="footer-note">
           <div class="keys-row"><span>Player 1</span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>steer</span><kbd>Shift</kbd><span>drift</span></div>
           <div class="keys-row"><span>Player 2</span><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd><span>steer</span><kbd>R-Shift</kbd><span>drift</span></div>
           <div class="keys-row"><span>Any</span><kbd>Esc</kbd><span>pause</span><kbd>R</kbd><span>reset</span><span>· gamepads and touch supported</span></div>
+          <a href="./showroom.html">Car showroom: see every car up close →</a>
         </div>
-      </div>`);
+      </div>`, { title: '' });
     this.on('[data-go]', 'click', (e, el) => {
       const go = el.dataset.go;
       if (go === 'horizon') this.horizonIntro();
       else if (go === 'settings') this.settings();
+      else if (go === 'about') this.openAbout();
       else this.raceSetup(go);
     });
   }
@@ -134,7 +201,7 @@ export class UI {
               </div>`).join('')}
           </div>
           <div class="row end" style="margin-top:18px"><button class="primary" data-start style="min-width:220px">Start Race</button></div>
-        </div>`);
+        </div>`, { title: MODE_TITLES[mode] });
       this.on('[data-back]', 'click', () => this.mainMenu());
       this.on('[data-track]', 'click', (e, el) => { st.trackId = el.dataset.track; render(); });
       this.on('[data-field]', 'input', (e, el) => { st[el.dataset.field] = parseInt(el.value, 10); const v = document.getElementById(el.dataset.field === 'laps' ? 'lapsv' : 'aiv'); if (v) v.textContent = el.value; });
@@ -229,7 +296,7 @@ export class UI {
           ${st.complete ? '<button data-restart>Replay series</button>' : ''}
           ${next ? `<button class="primary" data-race style="min-width:240px">Race round ${st.event + 1}: ${getTrack(next.track).name}</button>` : ''}
         </div>
-      </div>`);
+      </div>`, { title: s.name });
     this.on('[data-close]', 'click', () => onClose());
     this.on('[data-race]', 'click', () => onRace());
     this.on('[data-restart]', 'click', () => {
@@ -260,7 +327,7 @@ export class UI {
     const elsewhere = {
       hq: '',
       dealer: 'Upgrades at a tuning shop or Festival HQ · paint and switching cars at Festival HQ.',
-      tuning: 'Buy cars at Apex Motors or Festival HQ · paint and switching cars at Festival HQ.',
+      tuning: 'Buy cars at Turbo Motors or Festival HQ · paint and switching cars at Festival HQ.',
     }[mode];
     const carCard = (c) => {
       const owned = p.cars.includes(c.id);
@@ -297,7 +364,7 @@ export class UI {
         ${body}
         ${elsewhere ? `<div class="meta" style="margin-top:12px">${elsewhere}</div>` : ''}
         <div class="row end" style="margin-top:16px"><button class="primary" data-back style="min-width:240px">Drive away in the ${sel.name} <kbd>Esc</kbd></button></div>
-      </div>`);
+      </div>`, { title: eyebrow });
     this.on('[data-back]', 'click', () => (opts.onClose ? opts.onClose() : this.mainMenu()));
     this.on('[data-paint]', 'click', (e, el) => { p.colorIndex = +el.dataset.paint; app.save(); again(); });
     this.on('[data-select]', 'click', (e, el) => { p.selected = el.dataset.select; app.save(); again(); });
@@ -341,7 +408,7 @@ export class UI {
             <button class="small" data-reset style="border-color:var(--bad);color:var(--bad)">Reset career progress</button>
           </div>
         </div>
-      </div>`);
+      </div>`, { title: 'Settings' });
     this.rerender = () => this.settings();
     this._startPadDiag();
     this.on('[data-back]', 'click', () => this.mainMenu());
@@ -392,7 +459,7 @@ export class UI {
           ${roaming ? '<button data-map>Map <span class="hint">Waypoints, fast travel, progress</span></button><button data-garage>Go to garage <span class="hint">Fast travel to Festival HQ: cars, upgrades, paint</span></button>' : '<button data-restart>Restart race</button>'}
           ${inEvent ? '<button data-quit>Back to Free Roam</button>' : roaming ? '<button data-quit-roam>Quit to menu <span class="hint">Position is saved</span></button>' : '<button data-quit>Quit to menu</button>'}
         </div>
-      </div>`);
+      </div>`, { title: 'Paused' });
     this.on('[data-resume]', 'click', () => app.togglePause());
     this.on('[data-restart]', 'click', () => app.restartRace());
     this.on('[data-map]', 'click', () => { this.horizonMap(true); });
@@ -410,7 +477,7 @@ export class UI {
     this.rerender = () => this.horizonIntro();
     this.show(`
       <div class="panel">
-        <div class="row between"><h2>Apex Horizon</h2><button class="small ghost" data-back>← Back</button></div>
+        <div class="row between"><h2>Turbo Tour</h2><button class="small ghost" data-back>← Back</button></div>
         <p>Your career is the island. Race drive-up events, take on the four championships at their venues, hunt speed traps, drift zones and bonus boards,
         and spend what you win at Festival HQ, the garage next to the festival start.</p>
         ${this._walletBar()}
@@ -439,7 +506,7 @@ export class UI {
           ${hz.pos ? '<button data-fresh>Start at Festival HQ</button>' : ''}
           <button class="primary" data-start style="min-width:240px">${hz.pos ? 'Continue' : 'Drive'}</button>
         </div>
-      </div>`);
+      </div>`, { title: 'Free Roam' });
     this.on('[data-back]', 'click', () => this.mainMenu());
     this.on('[data-ctl]', 'click', (e, el) => { p.settings.p1Control = el.dataset.id; app.save(); this.horizonIntro(); });
     this.on('[data-fresh]', 'click', () => { p.horizon.pos = null; app.save(); this._launchHorizon(); });
@@ -447,7 +514,7 @@ export class UI {
   }
 
   _launchHorizon() {
-    this.show(`<div class="panel narrow" style="text-align:center"><div class="logo" style="font-size:40px">APEX <span>HORIZON</span></div><div class="tagline" style="margin:14px 0 0">Building the world…</div></div>`);
+    this.show(`<div class="panel narrow" style="text-align:center"><div class="logo" style="font-size:40px">TURBO <span>TOUR</span></div><div class="tagline" style="margin:14px 0 0">Building the world…</div></div>`, { title: 'Free Roam' });
     setTimeout(() => this.app.startHorizon(), 40);
   }
 
@@ -458,7 +525,7 @@ export class UI {
     if (this.worldMap) this.worldMap.dispose();
     this.mapOpen = true;
     this.rerender = null;
-    this.show('', { transparent: true });
+    this.show('', { transparent: true, title: 'Map' });
     this.el.classList.add('fullbleed');
     this.worldMap = new WorldMap(this.el, {
       hz, app, fromPause,
@@ -509,7 +576,7 @@ export class UI {
           ${ctx.mode !== 'career' ? '<button data-retry>Race again</button>' : ''}
           <button class="primary" data-continue>${ctx.mode === 'horizon' || (ctx.mode === 'career' && app.horizon) ? 'Back to the island' : ctx.mode === 'career' ? 'Continue' : 'Main menu'}</button>
         </div>
-      </div>`);
+      </div>`, { title: 'Results' });
     this.on('[data-retry]', 'click', () => app.restartRace());
     this.on('[data-continue]', 'click', () => app.leaveRace(ctx.mode === 'career' ? 'career' : ctx.mode === 'horizon' ? 'horizon' : 'menu'));
   }

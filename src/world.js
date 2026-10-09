@@ -971,7 +971,7 @@ export class World {
       if ((outX && outZ) || (outskirts && near.dist - s.hw > M)) return false;
       if (this.buildings.some(b => Math.hypot(b.x - x, b.z - z) < (b.r + half) * 0.8 + GAP)) return false;
       if (this.plazas.some(q => Math.hypot(q.x - x, q.z - z) < q.r + half * 0.7)) return false;
-      // leave room for the garages placed later (Apex Motors stands on the outskirts)
+      // leave room for the garages placed later (Turbo Motors stands on the outskirts)
       if (GARAGES.some(g => g.at && Math.hypot(g.at[0] - x, g.at[1] - z) < 80 + half)) return false;
       const dc = Math.hypot(x - CITY.cx, z - CITY.cz);
       const style = !outskirts ? 'office' : z > CITY.z1 || hr < 0.4 ? 'warehouse' : 'shop';
@@ -1052,8 +1052,8 @@ export class World {
 
 // ------------------------------------------------------------ Roadside props
 const BILLBOARDS = [
-  { text: 'APEX HORIZON FESTIVAL', bg: '#ff5a1f', fg: '#fff' }, { text: 'DRIFT KINGS · RED MESA', bg: '#2a1440', fg: '#e3a7ff' },
-  { text: 'NEON NIGHTS · APEX CITY', bg: '#0d1b3d', fg: '#3df2ff' }, { text: 'FROSTPEAK SKI LODGE', bg: '#e9f1f7', fg: '#1d3f66' },
+  { text: 'TURBO TOUR FESTIVAL', bg: '#ff5a1f', fg: '#fff' }, { text: 'DRIFT KINGS · RED MESA', bg: '#2a1440', fg: '#e3a7ff' },
+  { text: 'NEON NIGHTS · TURBO CITY', bg: '#0d1b3d', fg: '#3df2ff' }, { text: 'FROSTPEAK SKI LODGE', bg: '#e9f1f7', fg: '#1d3f66' },
   { text: 'AZURE SHORE RESORT', bg: '#1d7fc4', fg: '#fff' }, { text: 'TURBO COLA', bg: '#c8102e', fg: '#fff' },
   { text: 'GRIP TYRES', bg: '#111', fg: '#ffd23f' }, { text: 'MESA MOTORS', bg: '#d4ab6e', fg: '#3a2410' },
 ];

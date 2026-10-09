@@ -127,7 +127,7 @@ export class Horizon {
   /** The guide banner for the current step (null hides it). */
   guideText() {
     const g = this.prog.guide;
-    if (g === 'new') return { title: 'Welcome to Apex Horizon', text: 'This is Festival HQ, your garage. Drive onto the glowing pad by its doors and press Enter to see your cars.' };
+    if (g === 'new') return { title: 'Welcome to Turbo Tour', text: 'This is Festival HQ, your garage. Drive onto the glowing pad by its doors and press Enter to see your cars.' };
     if (g === 'moved') return { title: 'New: your garage is on the island', text: 'Cars, upgrades and championships now live in the world. Festival HQ is your garage: follow the purple route and press Enter on its pad.' };
     if (g === 'event') return { title: 'One wallet for everything', text: 'Credits from events, championships, speed traps, drift zones and bonus boards all go to the wallet top right. Follow the route to your first event.' };
     if (g === 'race') return { title: 'Press Enter to race', text: 'Championships are the gold trophy markers on the map (M). Higher levels unlock the bigger ones.' };

@@ -3,15 +3,72 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Apex Rush – 3D Racing</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%23ff5a1f'/><text x='50' y='68' font-size='52' text-anchor='middle' font-family='Arial' font-weight='bold' fill='white'>A</text></svg>" />
+  <title>Turbo Tour – Free 3D Racing Game in Your Browser (No Download)</title>
+  <meta name="description" content="Free 3D car racing game you play in your browser, no download. Open-world free roam, 16 circuits, 2-player split screen, drifting and touch controls." />
+  <link rel="canonical" href="https://sahilkoditkar.github.io/game-turbo-tour/" />
+  <meta name="robots" content="index,follow" />
+  <!-- Google Search Console (see README → Publishing checklist): paste your tag here and uncomment it -->
+  <!-- <meta name="google-site-verification" content="..."> -->
+
+  <!-- Open Graph / social previews -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Turbo Tour" />
+  <meta property="og:title" content="Turbo Tour – Free 3D Racing Game in Your Browser" />
+  <meta property="og:description" content="Open-world driving, 16 circuits, drifting and 2-player split screen. Free, no download: plays instantly in your browser." />
+  <meta property="og:url" content="https://sahilkoditkar.github.io/game-turbo-tour/" />
+  <meta property="og:image" content="https://sahilkoditkar.github.io/game-turbo-tour/assets/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Turbo Tour logo next to an orange supercar on a glowing turntable" />
+  <meta property="og:locale" content="en_US" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Turbo Tour – Free 3D Racing Game in Your Browser" />
+  <meta name="twitter:description" content="Open-world driving, 16 circuits, drifting and 2-player split screen. Free, no download." />
+  <meta name="twitter:image" content="https://sahilkoditkar.github.io/game-turbo-tour/assets/og-image.png" />
+  <meta name="twitter:image:alt" content="Turbo Tour logo next to an orange supercar on a glowing turntable" />
+
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="./assets/favicon-32.png" type="image/png" sizes="32x32" />
+  <link rel="icon" href="./assets/favicon-192.png" type="image/png" sizes="192x192" />
+  <link rel="alternate icon" href="./assets/favicon.ico" sizes="16x16 32x32 48x48" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" sizes="180x180" />
+  <link rel="manifest" href="./site.webmanifest" />
+  <meta name="theme-color" content="#ff5a1f" />
   <link rel="stylesheet" href="./style.css" />
+  <!-- without JavaScript the loading screen would never clear: show the About section instead -->
+  <noscript><style>#loading { display: none; }</style></noscript>
   <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js" } }
   </script>
+  <link rel="modulepreload" href="./vendor/three.module.js" />
+  <link rel="modulepreload" href="./src/main.js" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": ["VideoGame", "WebApplication"],
+    "name": "Turbo Tour",
+    "alternateName": "Turbo Tour racing game",
+    "description": "Free 3D car racing game that runs in your browser with WebGL. No download or sign-up: open-world free roam on a 6 km island, 16 circuits, 4 point-to-point stages, 10 cars, drifting, championships, time trial with a ghost car and 2-player split screen. Touch controls on phones and tablets.",
+    "url": "https://sahilkoditkar.github.io/game-turbo-tour/",
+    "image": "https://sahilkoditkar.github.io/game-turbo-tour/assets/og-image.png",
+    "genre": ["Racing", "Arcade", "Open world"],
+    "gamePlatform": ["Web browser", "PC", "Mobile"],
+    "applicationCategory": "GameApplication",
+    "operatingSystem": "Any",
+    "browserRequirements": "Requires JavaScript and WebGL",
+    "playMode": ["SinglePlayer", "MultiPlayer"],
+    "numberOfPlayers": { "@type": "QuantitativeValue", "minValue": 1, "maxValue": 2 },
+    "isAccessibleForFree": true,
+    "inLanguage": "en",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock" },
+    "author": { "@type": "Person", "name": "Sahil Koditkar", "url": "https://github.com/sahilkoditkar" },
+    "sameAs": ["https://github.com/sahilkoditkar/game-turbo-tour"],
+    "keywords": "free racing game, browser racing game, 3D car game, no download, open world driving, drift game, split screen, 2 player racing, WebGL, Three.js, HTML5 game"
+  }
+  </script>
 </head>
 <body>
-  <canvas id="game"></canvas>
+  <canvas id="game" aria-label="Turbo Tour 3D game view"></canvas>
 
   <!-- Per-player heads-up displays -->
   <div id="hud-layer" class="hidden">
@@ -27,9 +84,85 @@
   </div>
 
   <div id="loading">
-    <div class="logo">APEX <span>RUSH</span></div>
-    <div class="sub">Loading engine…</div>
+    <h1 class="logo">TURBO <span>TOUR</span></h1>
+    <p class="tagline">Free 3D car racing game in your browser</p>
+    <div class="bar" aria-hidden="true"></div>
+    <div class="sub" role="status">Loading engine…</div>
   </div>
+
+  <!-- About the game: plain HTML so it works without JavaScript; the game moves it behind the
+       "About Turbo Tour" button on the main menu (see UI.initAbout in src/ui.js). -->
+  <section id="about" aria-labelledby="about-title">
+    <div class="about-panel">
+      <noscript>
+        <p class="notice">Turbo Tour needs JavaScript and WebGL to run. Please enable JavaScript (or use a
+        current version of Chrome, Edge, Firefox or Safari) and reload the page. The source code is on
+        <a href="https://github.com/sahilkoditkar/game-turbo-tour">GitHub</a>.</p>
+      </noscript>
+      <h2 id="about-title">About Turbo Tour</h2>
+      <p>Turbo Tour is a free browser racing game: a 3D car game you play instantly, with no download and no
+      sign-up. Drive an open world island in free roam, race on circuits and point-to-point stages, drift
+      through hairpins and earn credits to buy and upgrade your cars.</p>
+      <p>Two players can race in split screen on the same keyboard (WASD and the arrow keys) or with two
+      gamepads. The game is built with WebGL and Three.js, runs on desktop browsers and works on phones and
+      tablets with on-screen touch controls.</p>
+
+      <h3>Features</h3>
+      <ul>
+        <li>Open-world free roam: an island about 6 km across with a city, farmland, forest, desert, an alpine pass and a coast road.</li>
+        <li>16 circuits with elevation, including layouts inspired by Silverstone, Monza and Spa-Francorchamps.</li>
+        <li>4 point-to-point stages of 6–10 km: hillclimb, coastal highway, desert and forest rally.</li>
+        <li>10 cars, from a hot hatch and a rally car to a supercar, a hypercar and an F1 car.</li>
+        <li>2-player split screen on one keyboard or with two gamepads.</li>
+        <li>Time trial with a ghost car of your best lap.</li>
+        <li>Proper drifting with the handbrake, tyre smoke and skid marks.</li>
+        <li>A career with four championships, prize money, garages and upgrades; progress saves in your browser.</li>
+      </ul>
+
+      <h3>Controls</h3>
+      <div class="about-table">
+        <table>
+          <thead><tr><th>Action</th><th>Player 1</th><th>Player 2</th><th>Gamepad</th></tr></thead>
+          <tbody>
+            <tr><td>Accelerate</td><td><kbd>W</kbd></td><td><kbd>↑</kbd></td><td>RT / A</td></tr>
+            <tr><td>Brake / reverse</td><td><kbd>S</kbd></td><td><kbd>↓</kbd></td><td>LT / X</td></tr>
+            <tr><td>Steer</td><td><kbd>A</kbd> <kbd>D</kbd></td><td><kbd>←</kbd> <kbd>→</kbd></td><td>Left stick</td></tr>
+            <tr><td>Handbrake (drift)</td><td><kbd>Shift</kbd> / <kbd>Space</kbd></td><td><kbd>Right Shift</kbd> / <kbd>Right Ctrl</kbd></td><td>B / RB</td></tr>
+            <tr><td>Reset to track</td><td><kbd>R</kbd></td><td><kbd>.</kbd></td><td>Y</td></tr>
+            <tr><td>Pause</td><td><kbd>Esc</kbd></td><td><kbd>Esc</kbd></td><td>Start</td></tr>
+            <tr><td>Free roam: map</td><td><kbd>M</kbd> / <kbd>Tab</kbd></td><td></td><td>Back / Select</td></tr>
+            <tr><td>Free roam: start event</td><td><kbd>Enter</kbd> / <kbd>E</kbd></td><td></td><td>A</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>On phones and tablets, on-screen steering, gas, brake and drift buttons appear automatically.</p>
+
+      <h3>FAQ</h3>
+      <details>
+        <summary>Is Turbo Tour free?</summary>
+        <p>Yes. The whole game is free to play, with no ads, no in-app purchases and no account.</p>
+      </details>
+      <details>
+        <summary>Do I need to download anything?</summary>
+        <p>No. It runs directly in your web browser. You need a browser with JavaScript and WebGL, which every current version of Chrome, Edge, Firefox and Safari has.</p>
+      </details>
+      <details>
+        <summary>Does it work on mobile?</summary>
+        <p>Yes. On phones and tablets touch controls appear automatically. A recent device gives the smoothest frame rate; you can switch graphics to Low in Settings.</p>
+      </details>
+      <details>
+        <summary>Can two people play?</summary>
+        <p>Yes. Split Screen mode lets two players race on one screen: Player 1 uses WASD, Player 2 the arrow keys, or each player uses a gamepad.</p>
+      </details>
+      <details>
+        <summary>Where is my progress saved?</summary>
+        <p>In your browser's local storage on this device. Nothing is uploaded. Clearing site data or using a private window starts a fresh career.</p>
+      </details>
+
+      <p class="about-links">Turbo Tour is open source: <a href="https://github.com/sahilkoditkar/game-turbo-tour">view the code on GitHub</a> ·
+      <a href="./showroom.html">Open the car showroom</a></p>
+    </div>
+  </section>
 
   <script type="module" src="./src/main.js"></script>
 </body>

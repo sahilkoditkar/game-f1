@@ -56,7 +56,7 @@ export const CARS = [
     shape: 'hyper',
   },
   {
-    id: 'formula', name: 'Apex F1', price: 60000,
+    id: 'formula', name: 'Turbo F1', price: 60000,
     desc: 'A 2022-rules ground-effect Formula 1 car with halo and 18-inch wheels. The fastest thing on four wheels.',
     stats: { maxSpeed: 90, accel: 27, grip: 9.8, turn: 1.18, brake: 52 },
     shape: 'formula',

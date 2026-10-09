@@ -12,7 +12,25 @@ import {
   applyCareerResult, restartSeries, buyCar, buyUpgrade, recordBestLap,
 } from './career.js';
 
-const GHOST_PREFIX = 'apexrush.ghost.';
+// The static About section in index.html is for crawlers and no-JS visitors; with JS running it
+// lives behind the main menu's "About Turbo Tour" button (UI.openAbout).
+document.getElementById('about')?.classList.add('hidden');
+
+const GHOST_PREFIX = 'turbotour.ghost.';
+const OLD_GHOST_PREFIX = 'apexrush.ghost.';
+// one-time copy of pre-rename ghosts to the new prefix
+function migrateGhosts() {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+    for (const k of keys) {
+      if (!k || !k.startsWith(OLD_GHOST_PREFIX)) continue;
+      const nk = GHOST_PREFIX + k.slice(OLD_GHOST_PREFIX.length);
+      if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+    }
+  } catch (e) { /* storage unavailable or full */ }
+}
+migrateGhosts();
 function loadGhost(key) {
   try { const raw = localStorage.getItem(GHOST_PREFIX + key); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
 }
@@ -410,4 +428,22 @@ class App {
   }
 }
 
-window.app = new App();
+// All modules are loaded: say so, and give the browser one frame to paint it before the
+// (synchronous) renderer and menu set-up below blocks the main thread.
+const loadingSub = document.querySelector('#loading .sub');
+if (loadingSub) loadingSub.textContent = 'Starting engine…';
+await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+
+try {
+  window.app = new App();
+} catch (err) {
+  // No WebGL (or another start-up failure): clear the loading screen and show the About page instead.
+  console.error(err);
+  document.getElementById('loading')?.remove();
+  const about = document.getElementById('about');
+  if (about) {
+    about.querySelectorAll('.about-back, .about-done').forEach((b) => b.remove());
+    about.querySelector('.about-panel')?.insertAdjacentHTML('afterbegin', '<p class="notice">Turbo Tour could not start: this browser or device does not seem to support WebGL. Try a current version of Chrome, Edge, Firefox or Safari, with hardware acceleration turned on.</p>');
+    about.classList.remove('hidden');
+  }
+}

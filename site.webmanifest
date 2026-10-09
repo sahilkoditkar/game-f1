@@ -1,0 +1,16 @@
+{
+  "name": "Turbo Tour",
+  "short_name": "Turbo Tour",
+  "description": "Free 3D car racing game in your browser: open-world free roam, 16 circuits, split-screen, drifting.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0b0d12",
+  "theme_color": "#ff5a1f",
+  "icons": [
+    { "src": "./assets/favicon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/favicon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

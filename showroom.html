@@ -3,7 +3,28 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Apex Rush – Showroom</title>
+  <title>Turbo Tour – Car Showroom</title>
+  <meta name="description" content="Inspect all 10 cars from Turbo Tour, the free 3D browser racing game, up close: drag to orbit, pick a colour, from hot hatch to F1 car." />
+  <link rel="canonical" href="https://sahilkoditkar.github.io/game-turbo-tour/showroom.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Turbo Tour" />
+  <meta property="og:title" content="Turbo Tour – Car Showroom" />
+  <meta property="og:description" content="Every car from Turbo Tour, the free 3D racing game you play in your browser, on a turntable." />
+  <meta property="og:url" content="https://sahilkoditkar.github.io/game-turbo-tour/showroom.html" />
+  <meta property="og:image" content="https://sahilkoditkar.github.io/game-turbo-tour/assets/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Turbo Tour logo next to an orange supercar on a glowing turntable" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Turbo Tour – Car Showroom" />
+  <meta name="twitter:image" content="https://sahilkoditkar.github.io/game-turbo-tour/assets/og-image.png" />
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="./assets/favicon-32.png" type="image/png" sizes="32x32" />
+  <link rel="icon" href="./assets/favicon-192.png" type="image/png" sizes="192x192" />
+  <link rel="alternate icon" href="./assets/favicon.ico" sizes="16x16 32x32 48x48" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" sizes="180x180" />
+  <link rel="manifest" href="./site.webmanifest" />
+  <meta name="theme-color" content="#ff5a1f" />
   <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js" } }
   </script>
@@ -16,6 +37,8 @@
     #info { position: fixed; top: 14px; left: 16px; right: 16px; pointer-events: none; }
     #info h1 { margin: 0; font-size: 22px; }
     #info p { margin: 4px 0 0; max-width: 520px; color: #aab3c5; }
+    #info a { pointer-events: auto; display: inline-block; margin-bottom: 6px; color: #ffb347; font-weight: 600; text-decoration: none; }
+    #info a:hover, #info a:focus-visible { color: #fff; text-decoration: underline; }
     #colors { position: fixed; top: 14px; right: 16px; display: flex; gap: 6px; }
     #colors i { width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid #0b0d12; box-shadow: 0 0 0 1px #3a4152; }
     body.shot #bar, body.shot #info, body.shot #colors { display: none; }
@@ -23,7 +46,7 @@
 </head>
 <body>
   <canvas id="c"></canvas>
-  <div id="info"><h1></h1><p></p></div>
+  <div id="info"><a href="./">← Back to Turbo Tour</a><h1></h1><p></p></div>
   <div id="colors"></div>
   <div id="bar"></div>
   <script type="module">

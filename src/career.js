@@ -1,7 +1,8 @@
 import { CARS, SERIES, UPGRADES, AI_DRIVERS, AI_COLORS, POINTS, upgradeCost, effectiveStats, getCar, getSeries } from './data.js';
 import { levelForXp } from './worlddef.js';
 
-const KEY = 'apexrush.save.v1';
+const KEY = 'turbotour.save.v1';
+const OLD_KEY = 'apexrush.save.v1'; // pre-rename save, migrated once on load
 
 export function defaultProfile() {
   return {
@@ -25,6 +26,10 @@ export function defaultHorizon() {
 
 export function loadProfile() {
   try {
+    if (localStorage.getItem(KEY) === null) {
+      const old = localStorage.getItem(OLD_KEY);
+      if (old !== null) localStorage.setItem(KEY, old);
+    }
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultProfile();
     const p = JSON.parse(raw);

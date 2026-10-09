@@ -285,7 +285,7 @@ function makeBoardTexture(rand) {
   const c = document.createElement('canvas');
   c.width = 512; c.height = 112;
   const ctx = c.getContext('2d');
-  const names = ['APEX RUSH', 'TURBO OIL', 'NITRO TYRES', 'VELOCITA', 'GRIP&GO', 'PIT STOP CAFE'];
+  const names = ['TURBO TOUR', 'OCTANE OIL', 'NITRO TYRES', 'VELOCITA', 'GRIP&GO', 'PIT STOP CAFE'];
   const colors = ['#ff5a1f', '#2f7bff', '#3ddc84', '#ffd23f', '#b04cff', '#ffffff'];
   const i = Math.floor(rand() * names.length);
   ctx.fillStyle = '#14161c'; ctx.fillRect(0, 0, 512, 112);
