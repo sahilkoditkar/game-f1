@@ -54,7 +54,7 @@ export class UI {
     this.rerender = null;
     this.show(`
       <div class="panel narrow">
-        <div class="logo">APEX <span>RUSH</span></div>
+        <div class="logo">TURBO <span>TOUR</span></div>
         <div class="tagline">3D arcade racing · open world · split screen</div>
         ${this._walletBar()}
         <div class="menu">
@@ -260,7 +260,7 @@ export class UI {
     const elsewhere = {
       hq: '',
       dealer: 'Upgrades at a tuning shop or Festival HQ · paint and switching cars at Festival HQ.',
-      tuning: 'Buy cars at Apex Motors or Festival HQ · paint and switching cars at Festival HQ.',
+      tuning: 'Buy cars at Turbo Motors or Festival HQ · paint and switching cars at Festival HQ.',
     }[mode];
     const carCard = (c) => {
       const owned = p.cars.includes(c.id);
@@ -410,7 +410,7 @@ export class UI {
     this.rerender = () => this.horizonIntro();
     this.show(`
       <div class="panel">
-        <div class="row between"><h2>Apex Horizon</h2><button class="small ghost" data-back>← Back</button></div>
+        <div class="row between"><h2>Turbo Tour</h2><button class="small ghost" data-back>← Back</button></div>
         <p>Your career is the island. Race drive-up events, take on the four championships at their venues, hunt speed traps, drift zones and bonus boards,
         and spend what you win at Festival HQ, the garage next to the festival start.</p>
         ${this._walletBar()}
@@ -447,7 +447,7 @@ export class UI {
   }
 
   _launchHorizon() {
-    this.show(`<div class="panel narrow" style="text-align:center"><div class="logo" style="font-size:40px">APEX <span>HORIZON</span></div><div class="tagline" style="margin:14px 0 0">Building the world…</div></div>`);
+    this.show(`<div class="panel narrow" style="text-align:center"><div class="logo" style="font-size:40px">TURBO <span>TOUR</span></div><div class="tagline" style="margin:14px 0 0">Building the world…</div></div>`);
     setTimeout(() => this.app.startHorizon(), 40);
   }
 

@@ -12,7 +12,21 @@ import {
   applyCareerResult, restartSeries, buyCar, buyUpgrade, recordBestLap,
 } from './career.js';
 
-const GHOST_PREFIX = 'apexrush.ghost.';
+const GHOST_PREFIX = 'turbotour.ghost.';
+const OLD_GHOST_PREFIX = 'apexrush.ghost.';
+// one-time copy of pre-rename ghosts to the new prefix
+function migrateGhosts() {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+    for (const k of keys) {
+      if (!k || !k.startsWith(OLD_GHOST_PREFIX)) continue;
+      const nk = GHOST_PREFIX + k.slice(OLD_GHOST_PREFIX.length);
+      if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+    }
+  } catch (e) { /* storage unavailable or full */ }
+}
+migrateGhosts();
 function loadGhost(key) {
   try { const raw = localStorage.getItem(GHOST_PREFIX + key); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
 }

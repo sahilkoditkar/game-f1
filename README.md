@@ -1,4 +1,4 @@
-# Apex Rush — 3D arcade racing in the browser
+# Turbo Tour — 3D arcade racing in the browser
 
 A complete 3D car racing game built with [Three.js](https://threejs.org/) and plain ES modules.
 No build step, no bundler, no server-side code: the repository *is* the website, so it can be
@@ -9,7 +9,7 @@ hosted directly on GitHub Pages (or any static host).
 - **Free Roam open world** (new): an island about 6 km across, streamed in chunks around you, with sea
   all the way round and an irregular coastline of beaches, headlands (Lighthouse Point, Sunset Cape,
   Frost Point…), a cove and a bay. Six regions: Meadowvale farmland, Pinewood Hills forest, Red Mesa Flats
-  desert, the Frostpeak alpine pass, the Azure Shore and Apex City, whose streets bend and run on uneven
+  desert, the Frostpeak alpine pass, the Azure Shore and Turbo City, whose streets bend and run on uneven
   blocks (two stop short at T-junctions), with buildings turned to face their street and seven roads in
   and out. Twenty-eight roads from a four-lane highway ring and the Shoreline Highway round the coast down
   to gravel trails, all joined into one network: every road meets another at a real junction, where
@@ -37,7 +37,7 @@ hosted directly on GitHub Pages (or any static host).
   Grand Prix: level 8; Legends: level 12). Every money popup says where it went ("+1,200 cr → wallet"),
   and the HUD shows level, XP to the next level and the wallet.
 - **Garages you drive to**: **Festival HQ**, next to the festival start, does everything (buy, choose,
-  upgrade, paint); the **Apex Motors** dealership on Grand Avenue is a glass showroom with real cars
+  upgrade, paint); the **Turbo Motors** dealership on Grand Avenue is a glass showroom with real cars
   on turntables where you browse and buy; **Red Mesa Tuning** and **Shoreline Tuning** do upgrades. Drive
   onto a garage's pad and press Enter; you leave in whatever car you picked, with no trip back to a
   menu. All of them show on the map and radar, unlock fast travel once discovered (Festival HQ from
@@ -113,7 +113,8 @@ published automatically. The included `.nojekyll` file makes Pages serve the fil
 GitHub Pages. It is manual-only (`workflow_dispatch`) so it does not conflict with Option A; set
 **Source** to **GitHub Actions** and add a `push` trigger if you prefer this route.
 
-Your game will be available at `https://<user>.github.io/<repo>/`. All asset paths are relative,
+This game is live at https://sahilkoditkar.github.io/game-turbo-tour/ (in general, a fork is served at
+`https://<user>.github.io/<repo>/`). All asset paths are relative,
 so it works from a project sub-path as well as from a custom domain.
 
 ## Controls

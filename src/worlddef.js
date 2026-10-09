@@ -33,7 +33,7 @@ export const REGIONS = [
   { id: 'alpine', name: 'Frostpeak Pass', cx: 0, cz: -2700, r: 1000, soft: 800, lx: 750, lz: -2560 },
   { id: 'forest', name: 'Pinewood Hills', cx: -1900, cz: -1200, r: 950, soft: 650 },
   { id: 'desert', name: 'Red Mesa Flats', cx: 2250, cz: -600, r: 950, soft: 650, lx: 2330, lz: -960 },
-  { id: 'city', name: 'Apex City', cx: 1912, cz: 1712, r: 520, soft: 280, lx: 1912, lz: 1170 },
+  { id: 'city', name: 'Turbo City', cx: 1912, cz: 1712, r: 520, soft: 280, lx: 1912, lz: 1170 },
   { id: 'coast', name: 'Azure Shore', lx: -1500, lz: 2700 },   // z-based, see World.regionWeights
   { id: 'grass', name: 'Meadowvale', lx: -700, lz: 1450 },
 ];
@@ -49,7 +49,7 @@ function ring(n = 20) {
   return pts;
 }
 
-// ------------------------------------------------------------------ Apex City
+// ------------------------------------------------------------------ Turbo City
 // Six north-south and six east-west streets on uneven spacing, every crossing
 // nudged a little so blocks are not perfect squares, two streets that stop short
 // and curve into each other, and six ways in and out. Deterministic, so the map never changes.
@@ -85,7 +85,7 @@ const bezier = (p0, p1, p2, p3) => (t) => {
 };
 
 function cityStreets() {
-  const NS = ['Harbour St', 'Festival Ave', 'Apex Blvd', 'North Gate Rd', 'Dock Lane', 'Skyline Dr'];
+  const NS = ['Harbour St', 'Festival Ave', 'Turbo Blvd', 'North Gate Rd', 'Dock Lane', 'Skyline Dr'];
   const EW = ['Grand Avenue', 'Market St', 'Union St', 'Harbour Road', 'Beacon St', 'Cannery Row'];
   // Festival Ave and Beacon St stop short and sweep into each other: one quarter-ellipse
   // arc from Festival Ave heading south to Beacon St heading east, each street taking
@@ -143,7 +143,7 @@ function cityStreets() {
     if (j === 0) pts.splice(pts.length - 2, 2, ...firstHalf.map(ne));                                      // rounded north-east corner
     if (j === 5) pts.splice(0, 2, ...secondHalf.map(sw));                                                  // rounded south-west corner
     if (j === 5) pts.splice(pts.length - 2, 2, ...firstHalf.map(se));                                      // rounded south-east corner
-    // Harbour Road runs dead straight from Apex Blvd to North Gate Rd
+    // Harbour Road runs dead straight from Turbo Blvd to North Gate Rd
     const straight = j === 3 ? [pts.findIndex(p => p[0] === node(2, 3)[0] && p[1] === node(2, 3)[1])] : undefined;
     out.push({ id: `st-ew${j}`, name: EW[j], kind: 'street', width: 13, points: pts, ...(freeEnds[`ew${j}`] && { freeEnds: freeEnds[`ew${j}`] }), ...(straight && { straight }) });
   }
@@ -248,7 +248,7 @@ export const CHAMPIONSHIPS = [
  */
 export const GARAGES = [
   { id: 'hq', type: 'hq', name: 'Festival HQ' },
-  { id: 'dealer', type: 'dealer', name: 'Apex Motors', road: 'st-ew0', at: [1345, 1296], side: -1 },   // south of Grand Avenue
+  { id: 'dealer', type: 'dealer', name: 'Turbo Motors', road: 'st-ew0', at: [1345, 1296], side: -1 },   // south of Grand Avenue
   { id: 'tune-mesa', type: 'tuning', name: 'Red Mesa Tuning', road: 'ew', at: [2150, -230] },
   { id: 'tune-coast', type: 'tuning', name: 'Shoreline Tuning', road: 'coast', at: [-1450, 2280] },
 ];

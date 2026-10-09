@@ -28,7 +28,7 @@ export class HorizonHUD {
     this.el.classList.remove('hidden');
     this.el.innerHTML = `
       <div class="hz-top-left">
-        <div class="hz-mode">APEX HORIZON</div>
+        <div class="hz-mode">TURBO TOUR</div>
         <div class="hz-region">—</div>
         <div class="hz-road"></div>
       </div>

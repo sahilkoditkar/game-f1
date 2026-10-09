@@ -240,7 +240,7 @@ export class PropKit {
     for (const z of [-p.d / 2 + 3, p.d / 2 - 3]) this._box(o, this.m.white, len - 2, 0.32, 0.25, mid, -0.25, z);
   }
 
-  /** Apex Motors: a glass showroom with three cars on turntables. */
+  /** Turbo Motors: a glass showroom with three cars on turntables. */
   dealer(p) {
     const o = new THREE.Group(), M = this.m;
     const W = p.w, D = p.d, H = p.h;
