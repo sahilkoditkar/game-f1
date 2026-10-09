@@ -1,10 +1,24 @@
-# Turbo Tour — 3D arcade racing in the browser
+# Turbo Tour — free 3D car racing game in your browser
 
-A complete 3D car racing game built with [Three.js](https://threejs.org/) and plain ES modules.
-No build step, no bundler, no server-side code: the repository *is* the website, so it can be
-hosted directly on GitHub Pages (or any static host).
+**[▶ Play Turbo Tour](https://sahilkoditkar.github.io/game-turbo-tour/)** — free, no download, no sign-up.
 
-**Features**
+Turbo Tour is a free browser racing game: a 3D car game that runs instantly in any modern browser
+with WebGL. Drive an open-world island in free roam, race 16 circuits and four point-to-point
+stages, drift with the handbrake, and play 2-player split screen on the same keyboard. It works on
+desktop and on phones and tablets with touch controls. Built with [Three.js](https://threejs.org/)
+and plain ES modules: no build step, no bundler, no server-side code. The repository *is* the
+website, so it is hosted directly on GitHub Pages (or any static host).
+
+**Highlights**
+
+- Open-world free roam: a 6 km island with a city, villages, highways and gravel trails
+- 16 circuits (including Silverstone-, Monza- and Spa-inspired layouts) and 4 point-to-point stages
+- 10 cars, from a hot hatch to a hypercar and an F1 car, with upgrades and paint
+- Split-screen 2-player racing on one keyboard or two gamepads
+- Drifting, crash physics, dynamic AI, championships and a time trial ghost car
+- Plays in the browser on PC and mobile; progress saves locally
+
+## Features
 
 - **Free Roam open world** (new): an island about 6 km across, streamed in chunks around you, with sea
   all the way round and an irregular coastline of beaches, headlands (Lighthouse Point, Sunset Cape,
@@ -148,6 +162,9 @@ src/car.js            car physics
 src/carmodels.js      the ten car models (proportions, lights, aero, liveries)
 src/carkit.js         procedural body toolkit: lofted shells, arch cut-outs, surface panels, wheels
 showroom.html         turntable viewer for every car (drag to orbit, pick colours)
+404.html              branded not-found page (GitHub Pages serves it for missing paths)
+robots.txt, sitemap.xml  crawler hints (see Publishing checklist)
+assets/               favicons, app icons and og-image.png (1200x630 social preview)
 src/ai.js             AI driver behaviour
 src/track.js          spline sampling, road/curb/barrier geometry, track queries
 src/tracks.js         track definitions (control points, incl. real-circuit-inspired layouts) and themes
@@ -168,6 +185,70 @@ of 2D control `points`. The points are joined by a closed Catmull-Rom spline; ke
 points roughly 80–150 m apart and avoid crossings. The car starts at the first point heading
 toward the second. Optionally add `elevation: [[t, height], ...]` keypoints (t is the lap
 fraction from the start line) or an `elevationAmp` for a seeded rolling profile.
+
+## Publishing checklist (for the repo owner)
+
+Search engines and social sites only know about the game once it is linked and submitted. In order:
+
+1. **Rename the repository** on GitHub to `game-turbo-tour` (*Settings → General → Repository name*)
+   before sharing links or submitting anything, so the live URL is https://sahilkoditkar.github.io/game-turbo-tour/.
+2. **Repository "About" box** (gear icon on the repo home page): description
+   "Free 3D car racing game in your browser: open world, 16 circuits, split screen, drifting. No download.",
+   website `https://sahilkoditkar.github.io/game-turbo-tour/`, and topics: `racing-game`, `browser-game`, `html5-game`, `webgl`, `threejs`,
+   `javascript`, `open-world`, `split-screen`, `drift`, `car-game`, `free-game`, `github-pages`.
+3. **Social preview**: *Settings → General → Social preview* → upload `assets/og-image.png` so links to
+   the repository show the same card as links to the game.
+4. **Google Search Console**: add a **URL-prefix** property for `https://sahilkoditkar.github.io/game-turbo-tour/` (a Domain property needs DNS,
+   which github.io does not allow). Verify with either
+   - the **HTML file** method: put the `googleXXXX.html` file Google gives you in the repository root, or
+   - the **HTML tag** method: paste the `<meta name="google-site-verification" content="...">` tag into
+     `index.html`, replacing the commented-out placeholder near the top of `<head>` (just below the
+     `robots` meta tag). Keep it there permanently.
+
+   Then *Indexing → Sitemaps* → submit `sitemap.xml`, and *URL Inspection* → enter the home page →
+   **Request indexing**. Use *Live test → View tested page* to check Google sees the About text.
+5. **Bing Webmaster Tools**: *Add site → Import from Google Search Console*; the site and sitemap are
+   verified and imported automatically (this also feeds DuckDuckGo and others that use Bing).
+6. **The old URL will 404**: GitHub redirects the repository and git URLs after a rename, but **not**
+   the Pages site, so `https://sahilkoditkar.github.io/game-race/` stops working. To keep old links
+   alive, create a repository named `sahilkoditkar.github.io` (your user site) containing
+   `game-race/index.html`:
+
+   ```html
+   <!DOCTYPE html>
+   <meta charset="utf-8">
+   <title>Turbo Tour has moved</title>
+   <link rel="canonical" href="https://sahilkoditkar.github.io/game-turbo-tour/">
+   <meta http-equiv="refresh" content="0; url=https://sahilkoditkar.github.io/game-turbo-tour/">
+   <p>Turbo Tour has moved to <a href="https://sahilkoditkar.github.io/game-turbo-tour/">https://sahilkoditkar.github.io/game-turbo-tour/</a>.</p>
+   ```
+
+   That user-site repository is also the only place a robots.txt that crawlers actually read can live
+   (`https://sahilkoditkar.github.io/robots.txt`); the `robots.txt` in this repository only takes effect
+   on a custom domain. Add `Sitemap: https://sahilkoditkar.github.io/game-turbo-tour/sitemap.xml` to it if you create one.
+7. **Favicon in Google results**: Google shows one favicon per host, taken from the host's home page
+   (`https://sahilkoditkar.github.io/`), not from this project's sub-path. Only a custom domain (or an
+   icon on the user-site home page) changes the icon shown next to search results; browser tabs,
+   bookmarks and home-screen icons already use this project's icons.
+8. **Custom domain (optional)**: a domain such as `turbotour.example` fixes the favicon, robots.txt and
+   rename-redirect problems at once. Add it under *Settings → Pages → Custom domain*, then update the
+   canonical, Open Graph, JSON-LD and sitemap URLs (search the repo for `sahilkoditkar.github.io`).
+
+Check link previews with the [Facebook Sharing Debugger](https://developers.facebook.com/tools/debug/)
+and [LinkedIn Post Inspector](https://www.linkedin.com/post-inspector/), and the structured data with
+Google's [Rich Results Test](https://search.google.com/test/rich-results).
+
+## Where to share it
+
+- **itch.io** — upload a ZIP of the repo (index.html at the root) as an HTML game and link back to the live site: https://itch.io/game/new
+- **CrazyGames** — free developer portal, a Basic Launch needs no SDK: https://developer.crazygames.com
+- **Newgrounds** — HTML5 game upload as a ZIP: https://www.newgrounds.com/projects/games/new
+- **Game Jolt** — add a game, then an HTML build: https://gamejolt.com/dashboard
+- **GameDistribution** — distribution to many portals, revenue share via their SDK: https://gamedistribution.com/developers
+- **r/WebGames** — link straight to the playable page, title starts with the game name, no reposts within 3 months: https://www.reddit.com/r/WebGames/
+- **Show HN** — "Show HN: Turbo Tour – 3D browser racing game (Three.js)": https://news.ycombinator.com/showhn.html
+- **three.js forum, Showcase category**: https://discourse.threejs.org/c/showcase/8
+- **r/threejs**: https://www.reddit.com/r/threejs/
 
 ## License
 

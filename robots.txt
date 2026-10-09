@@ -1,0 +1,7 @@
+# Note: on a GitHub Pages project site (sahilkoditkar.github.io/game-turbo-tour/) crawlers only
+# read the robots.txt at the host root (sahilkoditkar.github.io/robots.txt), so this file is
+# ignored there. It takes effect if the game is served from its own (custom) domain.
+User-agent: *
+Allow: /
+
+Sitemap: https://sahilkoditkar.github.io/game-turbo-tour/sitemap.xml
