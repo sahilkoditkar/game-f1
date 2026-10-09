@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="100" fill="#ff5a1f"/>
+<g id="car" transform="translate(268 239) scale(.9) translate(-256 -266)">
+<path fill="none" stroke="#fff" stroke-linecap="round" stroke-width="14" opacity=".6" d="M10 284h34M22 312h28"/>
+<path fill="#fff" d="M70 322 66 280q0-16 16-18l38-4c40-22 80-48 130-54 40-4 70 10 102 42l68 12c26 4 36 20 34 42l-2 14q-2 10-14 10H84q-12 0-14-2ZM58 230h62a7 7 0 0 1 0 14H98l6 18H88l-6-18H58a7 7 0 0 1 0-14Z"/>
+<path fill="#0b0d12" d="M152 254c32-20 64-36 104-40h4v40Zm120 0v-40c22 0 40 12 58 40Z"/>
+<g fill="#0b0d12" stroke="#ff5a1f" stroke-width="12">
+<circle cx="160" cy="326" r="48"/><circle cx="372" cy="326" r="48"/>
+</g>
+<g fill="#e8ecf4"><circle cx="160" cy="326" r="18"/><circle cx="372" cy="326" r="18"/></g>
+</g>
+</svg>
