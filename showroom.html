@@ -37,6 +37,8 @@
     #info { position: fixed; top: 14px; left: 16px; right: 16px; pointer-events: none; }
     #info h1 { margin: 0; font-size: 22px; }
     #info p { margin: 4px 0 0; max-width: 520px; color: #aab3c5; }
+    #info a { pointer-events: auto; display: inline-block; margin-bottom: 6px; color: #ffb347; font-weight: 600; text-decoration: none; }
+    #info a:hover, #info a:focus-visible { color: #fff; text-decoration: underline; }
     #colors { position: fixed; top: 14px; right: 16px; display: flex; gap: 6px; }
     #colors i { width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid #0b0d12; box-shadow: 0 0 0 1px #3a4152; }
     body.shot #bar, body.shot #info, body.shot #colors { display: none; }
@@ -44,7 +46,7 @@
 </head>
 <body>
   <canvas id="c"></canvas>
-  <div id="info"><h1></h1><p></p></div>
+  <div id="info"><a href="./">← Back to Turbo Tour</a><h1></h1><p></p></div>
   <div id="colors"></div>
   <div id="bar"></div>
   <script type="module">

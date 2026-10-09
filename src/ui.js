@@ -134,6 +134,7 @@ export class UI {
           <div class="keys-row"><span>Player 1</span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>steer</span><kbd>Shift</kbd><span>drift</span></div>
           <div class="keys-row"><span>Player 2</span><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd><span>steer</span><kbd>R-Shift</kbd><span>drift</span></div>
           <div class="keys-row"><span>Any</span><kbd>Esc</kbd><span>pause</span><kbd>R</kbd><span>reset</span><span>· gamepads and touch supported</span></div>
+          <a href="./showroom.html">Car showroom: see every car up close →</a>
         </div>
       </div>`, { title: '' });
     this.on('[data-go]', 'click', (e, el) => {

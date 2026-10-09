@@ -428,6 +428,12 @@ class App {
   }
 }
 
+// All modules are loaded: say so, and give the browser one frame to paint it before the
+// (synchronous) renderer and menu set-up below blocks the main thread.
+const loadingSub = document.querySelector('#loading .sub');
+if (loadingSub) loadingSub.textContent = 'Starting engine…';
+await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+
 try {
   window.app = new App();
 } catch (err) {

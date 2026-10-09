@@ -40,6 +40,8 @@
   <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js" } }
   </script>
+  <link rel="modulepreload" href="./vendor/three.module.js" />
+  <link rel="modulepreload" href="./src/main.js" />
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -84,7 +86,8 @@
   <div id="loading">
     <h1 class="logo">TURBO <span>TOUR</span></h1>
     <p class="tagline">Free 3D car racing game in your browser</p>
-    <div class="sub">Loading engine…</div>
+    <div class="bar" aria-hidden="true"></div>
+    <div class="sub" role="status">Loading engine…</div>
   </div>
 
   <!-- About the game: plain HTML so it works without JavaScript; the game moves it behind the
